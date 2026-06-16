@@ -13,8 +13,8 @@ DHT dht(PINO_DHT, TIPO_DHT);
 // PINOS ANALÓGICOS
 // ==================================================
 
-#define PINO_SOLO  A0
-#define PINO_LDR   A1
+#define PINO_SOLO A0
+#define PINO_LDR A1
 #define PINO_CHUVA A2
 
 // ==================================================
@@ -84,8 +84,7 @@ void realizarLeitura() {
     umidadeAr,
     umidadeSolo,
     luminosidade,
-    chuva
-  );
+    chuva);
 }
 
 // ==================================================
@@ -97,8 +96,7 @@ void enviarDados(
   float umidadeAr,
   int umidadeSolo,
   int luminosidade,
-  int chuva
-) {
+  int chuva) {
   Serial.print("DADOS,");
 
   Serial.print(temperatura, 1);

@@ -1,19 +1,31 @@
-#include <Arduino.h>
+#include <SPI.h>
+#include <Ethernet.h>
 
 // ==================================================
-// CONFIGURAÇÃO UART
+// UART ARDUINO -> ESP32
 // ==================================================
 
 #define PINO_RX_ARDUINO 16
 #define PINO_TX_ARDUINO 17
 
-#define VELOCIDADE_MONITOR 115200
-#define VELOCIDADE_ARDUINO 9600
-
 HardwareSerial SerialArduino(2);
 
 // ==================================================
-// ESTRUTURA DOS DADOS
+// W5500
+// ==================================================
+
+#define PINO_SCK_W5500   18
+#define PINO_MISO_W5500  19
+#define PINO_MOSI_W5500  23
+#define PINO_CS_W5500     5
+#define PINO_RST_W5500   26
+
+byte mac[] = {
+  0x02, 0x47, 0x41, 0x54, 0x45, 0x01
+};
+
+// ==================================================
+// ESTRUTURA DOS DADOS AMBIENTAIS
 // ==================================================
 
 struct DadosAmbientais {
@@ -28,229 +40,214 @@ struct DadosAmbientais {
 DadosAmbientais dados;
 
 // ==================================================
-// BUFFER DE RECEPÇÃO
+// VARIÁVEIS DE CONTROLE
 // ==================================================
 
-const int TAMANHO_BUFFER = 120;
+String linhaRecebida = "";
 
-char bufferRecepcao[TAMANHO_BUFFER];
-int indiceBuffer = 0;
+unsigned long momentoUltimoPacote = 0;
+unsigned long momentoUltimaExibicao = 0;
+unsigned long momentoUltimaVerificacaoEthernet = 0;
 
-// ==================================================
-// MONITORAMENTO DA COMUNICAÇÃO
-// ==================================================
-
-const unsigned long TEMPO_LIMITE_COMUNICACAO = 6000;
-
-unsigned long ultimoPacoteValido = 0;
-
-unsigned long pacotesValidos = 0;
-unsigned long pacotesInvalidos = 0;
-
-bool recebeuPrimeiroPacote = false;
-bool falhaComunicacao = false;
+const unsigned long INTERVALO_EXIBICAO = 3000;
+const unsigned long INTERVALO_ETHERNET = 5000;
+const unsigned long TEMPO_LIMITE_UART = 10000;
 
 // ==================================================
-// PROTÓTIPOS
+// RESET DO W5500
 // ==================================================
 
-void receberUART();
-void processarLinha(char *linha);
-bool interpretarPacote(char *linha);
-bool validarDados(const DadosAmbientais &dadosRecebidos);
-void mostrarDados();
-void verificarComunicacao();
+void resetarW5500() {
+  pinMode(PINO_RST_W5500, OUTPUT);
+
+  digitalWrite(PINO_RST_W5500, LOW);
+  delay(200);
+
+  digitalWrite(PINO_RST_W5500, HIGH);
+  delay(500);
+}
 
 // ==================================================
-// SETUP
+// INICIALIZAÇÃO DA ETHERNET
 // ==================================================
 
-void setup() {
-  Serial.begin(VELOCIDADE_MONITOR);
+void iniciarEthernet() {
+  Serial.println();
+  Serial.println("====================================");
+  Serial.println("INICIALIZANDO W5500");
+  Serial.println("====================================");
+
+  pinMode(PINO_CS_W5500, OUTPUT);
+  digitalWrite(PINO_CS_W5500, HIGH);
+
+  resetarW5500();
+
+  SPI.begin(
+    PINO_SCK_W5500,
+    PINO_MISO_W5500,
+    PINO_MOSI_W5500,
+    PINO_CS_W5500
+  );
+
+  Ethernet.init(PINO_CS_W5500);
+
+  Serial.println("Solicitando endereco IP...");
+
+  if (Ethernet.begin(mac) == 0) {
+    Serial.println("Falha ao obter IP pelo DHCP.");
+
+    if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+      Serial.println("ERRO: W5500 nao detectado.");
+    } else {
+      Serial.println("W5500 detectado.");
+      Serial.println("Verifique o cabo e o roteador.");
+    }
+
+    return;
+  }
 
   delay(1000);
 
-  SerialArduino.begin(
-    VELOCIDADE_ARDUINO,
-    SERIAL_8N1,
-    PINO_RX_ARDUINO,
-    PINO_TX_ARDUINO
+  Serial.println("Ethernet inicializada com sucesso.");
+
+  Serial.print("IP: ");
+  Serial.println(Ethernet.localIP());
+
+  Serial.print("Gateway: ");
+  Serial.println(Ethernet.gatewayIP());
+
+  Serial.print("Mascara: ");
+  Serial.println(Ethernet.subnetMask());
+
+  Serial.print("DNS: ");
+  Serial.println(Ethernet.dnsServerIP());
+}
+
+// ==================================================
+// VALIDAÇÃO DOS DADOS
+// ==================================================
+
+bool validarDados(const DadosAmbientais &pacote) {
+  if (pacote.temperatura < -20.0 ||
+      pacote.temperatura > 80.0) {
+    return false;
+  }
+
+  if (pacote.umidadeAr < 0.0 ||
+      pacote.umidadeAr > 100.0) {
+    return false;
+  }
+
+  if (pacote.umidadeSolo < 0 ||
+      pacote.umidadeSolo > 1023) {
+    return false;
+  }
+
+  if (pacote.luminosidade < 0 ||
+      pacote.luminosidade > 1023) {
+    return false;
+  }
+
+  if (pacote.chuva < 0 ||
+      pacote.chuva > 1023) {
+    return false;
+  }
+
+  return true;
+}
+
+// ==================================================
+// PROCESSAMENTO DO PACOTE UART
+//
+// Formato esperado:
+//
+// DADOS,22.6,48.0,1023,462,374
+// ==================================================
+
+void processarLinha(String linha) {
+  linha.trim();
+
+  if (!linha.startsWith("DADOS,")) {
+    Serial.print("Pacote desconhecido: ");
+    Serial.println(linha);
+    return;
+  }
+
+  DadosAmbientais novoPacote;
+
+  int quantidadeLida = sscanf(
+    linha.c_str(),
+    "DADOS,%f,%f,%d,%d,%d",
+    &novoPacote.temperatura,
+    &novoPacote.umidadeAr,
+    &novoPacote.umidadeSolo,
+    &novoPacote.luminosidade,
+    &novoPacote.chuva
   );
 
-  Serial.println();
-  Serial.println("====================================");
-  Serial.println("Gateway ambiental - ESP32 iniciado");
-  Serial.println("====================================");
-  Serial.println("UART do Arduino:");
-  Serial.println("RX2: GPIO 16");
-  Serial.println("Velocidade: 9600 baud");
-  Serial.println();
-  Serial.println("Aguardando dados do Arduino...");
+  if (quantidadeLida != 5) {
+    Serial.print("Erro ao interpretar pacote: ");
+    Serial.println(linha);
+    return;
+  }
+
+  novoPacote.valido = validarDados(novoPacote);
+
+  if (!novoPacote.valido) {
+    Serial.print("Pacote fora dos limites: ");
+    Serial.println(linha);
+    return;
+  }
+
+  dados = novoPacote;
+  momentoUltimoPacote = millis();
 }
 
 // ==================================================
-// LOOP
+// RECEPÇÃO UART
 // ==================================================
 
-void loop() {
-  receberUART();
-  verificarComunicacao();
-}
-
-// ==================================================
-// RECEPÇÃO UART NÃO BLOQUEANTE
-// ==================================================
-
-void receberUART() {
-  while (SerialArduino.available() > 0) {
+void receberDadosArduino() {
+  while (SerialArduino.available()) {
     char caractere = SerialArduino.read();
 
-    // Ignora o caractere de retorno de carro
-    if (caractere == '\r') {
-      continue;
-    }
-
-    // Final da mensagem
     if (caractere == '\n') {
-      if (indiceBuffer > 0) {
-        bufferRecepcao[indiceBuffer] = '\0';
-
-        processarLinha(bufferRecepcao);
-
-        indiceBuffer = 0;
+      if (linhaRecebida.length() > 0) {
+        processarLinha(linhaRecebida);
+        linhaRecebida = "";
       }
+    } else if (caractere != '\r') {
+      linhaRecebida += caractere;
 
-      continue;
-    }
-
-    // Armazena o caractere se ainda houver espaço
-    if (indiceBuffer < TAMANHO_BUFFER - 1) {
-      bufferRecepcao[indiceBuffer] = caractere;
-      indiceBuffer++;
-    } else {
-      Serial.println("ERRO: buffer UART excedido.");
-
-      indiceBuffer = 0;
-      pacotesInvalidos++;
+      if (linhaRecebida.length() > 150) {
+        linhaRecebida = "";
+        Serial.println("Pacote UART descartado: muito grande.");
+      }
     }
   }
 }
 
 // ==================================================
-// PROCESSAMENTO DA LINHA RECEBIDA
+// VERIFICAÇÃO DA ETHERNET
 // ==================================================
 
-void processarLinha(char *linha) {
-  Serial.print("UART recebida: ");
-  Serial.println(linha);
-
-  // Mensagem de erro enviada pelo Arduino
-  if (strcmp(linha, "ERRO,DHT11") == 0) {
-    Serial.println("ALERTA: falha na leitura do sensor DHT11.");
-    Serial.println();
-
-    pacotesInvalidos++;
+void verificarEthernet() {
+  if (millis() - momentoUltimaVerificacaoEthernet <
+      INTERVALO_ETHERNET) {
     return;
   }
 
-  // Ignora mensagens de inicialização do Arduino
-  if (strncmp(linha, "DADOS,", 6) != 0) {
-    Serial.println("Mensagem informativa ignorada.");
-    Serial.println();
+  momentoUltimaVerificacaoEthernet = millis();
+
+  if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+    Serial.println("ERRO: W5500 nao detectado.");
     return;
   }
 
-  if (interpretarPacote(linha)) {
-    pacotesValidos++;
-
-    ultimoPacoteValido = millis();
-    recebeuPrimeiroPacote = true;
-
-    if (falhaComunicacao) {
-      Serial.println("COMUNICAÇÃO RESTABELECIDA.");
-
-      falhaComunicacao = false;
-    }
-
-    mostrarDados();
-  } else {
-    pacotesInvalidos++;
-
-    Serial.println("ERRO: pacote DADOS inválido.");
-    Serial.println();
+  if (Ethernet.linkStatus() == LinkOFF) {
+    Serial.println("ALERTA: cabo Ethernet desconectado.");
+    return;
   }
-}
-
-// ==================================================
-// INTERPRETAÇÃO DO PACOTE
-// ==================================================
-
-bool interpretarPacote(char *linha) {
-  DadosAmbientais dadosRecebidos;
-
-  int quantidadeConvertida = sscanf(
-    linha,
-    "DADOS,%f,%f,%d,%d,%d",
-    &dadosRecebidos.temperatura,
-    &dadosRecebidos.umidadeAr,
-    &dadosRecebidos.umidadeSolo,
-    &dadosRecebidos.luminosidade,
-    &dadosRecebidos.chuva
-  );
-
-  // Deve encontrar exatamente cinco valores
-  if (quantidadeConvertida != 5) {
-    return false;
-  }
-
-  dadosRecebidos.valido = validarDados(dadosRecebidos);
-
-  if (!dadosRecebidos.valido) {
-    return false;
-  }
-
-  // Atualiza os dados globais somente se o pacote for válido
-  dados = dadosRecebidos;
-
-  return true;
-}
-
-// ==================================================
-// VALIDAÇÃO DOS VALORES
-// ==================================================
-
-bool validarDados(const DadosAmbientais &dadosRecebidos) {
-  if (dadosRecebidos.temperatura < -40.0 ||
-      dadosRecebidos.temperatura > 80.0) {
-    Serial.println("Temperatura fora do intervalo permitido.");
-    return false;
-  }
-
-  if (dadosRecebidos.umidadeAr < 0.0 ||
-      dadosRecebidos.umidadeAr > 100.0) {
-    Serial.println("Umidade do ar fora do intervalo permitido.");
-    return false;
-  }
-
-  if (dadosRecebidos.umidadeSolo < 0 ||
-      dadosRecebidos.umidadeSolo > 1023) {
-    Serial.println("Umidade do solo fora do intervalo permitido.");
-    return false;
-  }
-
-  if (dadosRecebidos.luminosidade < 0 ||
-      dadosRecebidos.luminosidade > 1023) {
-    Serial.println("Luminosidade fora do intervalo permitido.");
-    return false;
-  }
-
-  if (dadosRecebidos.chuva < 0 ||
-      dadosRecebidos.chuva > 1023) {
-    Serial.println("Sensor de chuva fora do intervalo permitido.");
-    return false;
-  }
-
-  return true;
 }
 
 // ==================================================
@@ -260,58 +257,102 @@ bool validarDados(const DadosAmbientais &dadosRecebidos) {
 void mostrarDados() {
   Serial.println();
   Serial.println("====================================");
-  Serial.println("PACOTE AMBIENTAL VÁLIDO");
+  Serial.println("GATEWAY AMBIENTAL");
   Serial.println("====================================");
 
-  Serial.print("Temperatura: ");
-  Serial.print(dados.temperatura, 1);
-  Serial.println(" °C");
+  if (!dados.valido) {
+    Serial.println("Aguardando dados validos do Arduino...");
+  } else {
+    unsigned long tempoSemPacote =
+      millis() - momentoUltimoPacote;
 
-  Serial.print("Umidade do ar: ");
-  Serial.print(dados.umidadeAr, 1);
-  Serial.println(" %");
+    if (tempoSemPacote > TEMPO_LIMITE_UART) {
+      Serial.println("UART: sem resposta do Arduino");
+    } else {
+      Serial.println("UART: Arduino conectado");
+    }
 
-  Serial.print("Umidade do solo: ");
-  Serial.println(dados.umidadeSolo);
+    Serial.println("------------------------------------");
 
-  Serial.print("Luminosidade: ");
-  Serial.println(dados.luminosidade);
+    Serial.print("Temperatura: ");
+    Serial.print(dados.temperatura, 1);
+    Serial.println(" C");
 
-  Serial.print("Chuva: ");
-  Serial.println(dados.chuva);
+    Serial.print("Umidade do ar: ");
+    Serial.print(dados.umidadeAr, 1);
+    Serial.println(" %");
+
+    Serial.print("Umidade do solo: ");
+    Serial.println(dados.umidadeSolo);
+
+    Serial.print("Luminosidade: ");
+    Serial.println(dados.luminosidade);
+
+    Serial.print("Chuva: ");
+    Serial.println(dados.chuva);
+  }
 
   Serial.println("------------------------------------");
 
-  Serial.print("Pacotes válidos: ");
-  Serial.println(pacotesValidos);
+  Serial.print("W5500: ");
 
-  Serial.print("Pacotes inválidos: ");
-  Serial.println(pacotesInvalidos);
+  if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+    Serial.println("nao detectado");
+  } else if (Ethernet.linkStatus() == LinkOFF) {
+    Serial.println("cabo desconectado");
+  } else {
+    Serial.println("conectado");
+
+    Serial.print("IP: ");
+    Serial.println(Ethernet.localIP());
+  }
 
   Serial.println("====================================");
-  Serial.println();
 }
 
 // ==================================================
-// DETECÇÃO DE PERDA DE COMUNICAÇÃO
+// SETUP
 // ==================================================
 
-void verificarComunicacao() {
-  if (!recebeuPrimeiroPacote) {
-    return;
-  }
+void setup() {
+  Serial.begin(115200);
 
-  unsigned long tempoSemDados = millis() - ultimoPacoteValido;
+  SerialArduino.begin(
+    9600,
+    SERIAL_8N1,
+    PINO_RX_ARDUINO,
+    PINO_TX_ARDUINO
+  );
 
-  if (tempoSemDados > TEMPO_LIMITE_COMUNICACAO &&
-      !falhaComunicacao) {
-    falhaComunicacao = true;
+  dados.valido = false;
 
-    Serial.println();
-    Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-    Serial.println("ALERTA: comunicação UART perdida.");
-    Serial.println("Nenhum pacote válido por 6 segundos.");
-    Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-    Serial.println();
+  delay(1000);
+
+  Serial.println();
+  Serial.println("Iniciando Gateway Ambiental...");
+
+  iniciarEthernet();
+
+  Serial.println();
+  Serial.println("Aguardando pacotes do Arduino...");
+}
+
+// ==================================================
+// LOOP
+// ==================================================
+
+void loop() {
+  receberDadosArduino();
+
+  Ethernet.maintain();
+
+  verificarEthernet();
+
+  if (millis() - momentoUltimaExibicao >=
+      INTERVALO_EXIBICAO) {
+
+    momentoUltimaExibicao = millis();
+
+    mostrarDados();
   }
 }
