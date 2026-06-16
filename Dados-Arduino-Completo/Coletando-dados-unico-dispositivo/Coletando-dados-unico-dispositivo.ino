@@ -15,7 +15,7 @@ DHT dht(PINO_DHT, TIPO_DHT);
 
 #define PINO_SOLO A0
 #define PINO_LDR A1
-#define PINO_CHUVA A2
+#define PINO_CHUVA A3
 
 // ==================================================
 // TEMPORIZAÇÃO
