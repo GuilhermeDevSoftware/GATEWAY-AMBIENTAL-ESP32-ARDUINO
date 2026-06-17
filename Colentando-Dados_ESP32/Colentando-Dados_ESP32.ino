@@ -1,31 +1,55 @@
 #include <SPI.h>
 #include <Ethernet.h>
+#include <PubSubClient.h>
 
 // ==================================================
-// UART ARDUINO -> ESP32
+// CONFIGURAÇÃO DO W5500
 // ==================================================
 
-#define PINO_RX_ARDUINO 16
-#define PINO_TX_ARDUINO 17
+#define PINO_W5500_CS   5
+#define PINO_W5500_RST  26
 
-HardwareSerial SerialArduino(2);
+#define PINO_SPI_SCK    18
+#define PINO_SPI_MISO   19
+#define PINO_SPI_MOSI   23
 
-// ==================================================
-// W5500
-// ==================================================
-
-#define PINO_SCK_W5500   18
-#define PINO_MISO_W5500  19
-#define PINO_MOSI_W5500  23
-#define PINO_CS_W5500     5
-#define PINO_RST_W5500   26
-
+// Endereço MAC local do W5500.
+// Pode ser qualquer endereço válido que não esteja sendo usado na rede.
 byte mac[] = {
-  0x02, 0x47, 0x41, 0x54, 0x45, 0x01
+  0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED
 };
 
 // ==================================================
-// ESTRUTURA DOS DADOS AMBIENTAIS
+// CONFIGURAÇÃO DO MQTT
+// ==================================================
+
+// Atenção: os números devem ser separados por vírgulas.
+IPAddress ipBroker(192, 168, 100, 17);
+
+const uint16_t portaMQTT = 1883;
+
+const char* topicoDados        = "gateway/ambiental/dados";
+const char* topicoTemperatura  = "gateway/ambiental/temperatura";
+const char* topicoUmidadeAr    = "gateway/ambiental/umidade_ar";
+const char* topicoUmidadeSolo  = "gateway/ambiental/umidade_solo";
+const char* topicoLuminosidade = "gateway/ambiental/luminosidade";
+const char* topicoChuva        = "gateway/ambiental/chuva";
+const char* topicoStatus       = "gateway/ambiental/status";
+
+EthernetClient clienteEthernet;
+PubSubClient clienteMQTT(clienteEthernet);
+
+// ==================================================
+// CONFIGURAÇÃO DA UART
+// ==================================================
+
+#define PINO_UART_RX 16
+#define PINO_UART_TX 17
+
+HardwareSerial SerialSensores(2);
+
+// ==================================================
+// ESTRUTURA DOS DADOS
 // ==================================================
 
 struct DadosAmbientais {
@@ -34,36 +58,29 @@ struct DadosAmbientais {
   int umidadeSolo;
   int luminosidade;
   int chuva;
-  bool valido;
 };
 
 DadosAmbientais dados;
 
-// ==================================================
-// VARIÁVEIS DE CONTROLE
-// ==================================================
+// Buffer que receberá uma linha da UART.
+char linhaUART[100];
+uint8_t indiceLinha = 0;
 
-String linhaRecebida = "";
-
-unsigned long momentoUltimoPacote = 0;
-unsigned long momentoUltimaExibicao = 0;
-unsigned long momentoUltimaVerificacaoEthernet = 0;
-
-const unsigned long INTERVALO_EXIBICAO = 3000;
-const unsigned long INTERVALO_ETHERNET = 5000;
-const unsigned long TEMPO_LIMITE_UART = 10000;
+// Controle da tentativa de reconexão MQTT.
+unsigned long ultimaTentativaMQTT = 0;
+const unsigned long intervaloReconexaoMQTT = 5000;
 
 // ==================================================
 // RESET DO W5500
 // ==================================================
 
-void resetarW5500() {
-  pinMode(PINO_RST_W5500, OUTPUT);
+void reiniciarW5500() {
+  pinMode(PINO_W5500_RST, OUTPUT);
 
-  digitalWrite(PINO_RST_W5500, LOW);
+  digitalWrite(PINO_W5500_RST, LOW);
   delay(200);
 
-  digitalWrite(PINO_RST_W5500, HIGH);
+  digitalWrite(PINO_W5500_RST, HIGH);
   delay(500);
 }
 
@@ -74,43 +91,31 @@ void resetarW5500() {
 void iniciarEthernet() {
   Serial.println();
   Serial.println("====================================");
-  Serial.println("INICIALIZANDO W5500");
+  Serial.println("INICIANDO ETHERNET W5500");
   Serial.println("====================================");
 
-  pinMode(PINO_CS_W5500, OUTPUT);
-  digitalWrite(PINO_CS_W5500, HIGH);
-
-  resetarW5500();
-
   SPI.begin(
-    PINO_SCK_W5500,
-    PINO_MISO_W5500,
-    PINO_MOSI_W5500,
-    PINO_CS_W5500
+    PINO_SPI_SCK,
+    PINO_SPI_MISO,
+    PINO_SPI_MOSI,
+    PINO_W5500_CS
   );
 
-  Ethernet.init(PINO_CS_W5500);
+  Ethernet.init(PINO_W5500_CS);
 
-  Serial.println("Solicitando endereco IP...");
+  reiniciarW5500();
+
+  Serial.println("Obtendo endereco IP por DHCP...");
 
   if (Ethernet.begin(mac) == 0) {
-    Serial.println("Falha ao obter IP pelo DHCP.");
-
-    if (Ethernet.hardwareStatus() == EthernetNoHardware) {
-      Serial.println("ERRO: W5500 nao detectado.");
-    } else {
-      Serial.println("W5500 detectado.");
-      Serial.println("Verifique o cabo e o roteador.");
-    }
-
+    Serial.println("Falha ao obter IP por DHCP.");
+    Serial.println("Verifique o cabo e o roteador.");
     return;
   }
 
   delay(1000);
 
-  Serial.println("Ethernet inicializada com sucesso.");
-
-  Serial.print("IP: ");
+  Serial.print("IP do ESP32: ");
   Serial.println(Ethernet.localIP());
 
   Serial.print("Gateway: ");
@@ -119,37 +124,100 @@ void iniciarEthernet() {
   Serial.print("Mascara: ");
   Serial.println(Ethernet.subnetMask());
 
-  Serial.print("DNS: ");
-  Serial.println(Ethernet.dnsServerIP());
+  Serial.print("IP do broker MQTT: ");
+  Serial.println(ipBroker);
 }
 
 // ==================================================
-// VALIDAÇÃO DOS DADOS
+// CONEXÃO MQTT
 // ==================================================
 
-bool validarDados(const DadosAmbientais &pacote) {
-  if (pacote.temperatura < -20.0 ||
-      pacote.temperatura > 80.0) {
+void conectarMQTT() {
+  if (clienteMQTT.connected()) {
+    return;
+  }
+
+  unsigned long tempoAtual = millis();
+
+  if (tempoAtual - ultimaTentativaMQTT < intervaloReconexaoMQTT) {
+    return;
+  }
+
+  ultimaTentativaMQTT = tempoAtual;
+
+  Serial.println();
+  Serial.print("Conectando ao Mosquitto em ");
+  Serial.print(ipBroker);
+  Serial.print(":");
+  Serial.println(portaMQTT);
+
+  // Cria um identificador único utilizando o chip do ESP32.
+  uint64_t chipID = ESP.getEfuseMac();
+
+  char idCliente[40];
+
+  snprintf(
+    idCliente,
+    sizeof(idCliente),
+    "ESP32-Gateway-%04X",
+    (uint16_t)(chipID >> 32)
+  );
+
+  /*
+    Configura também uma última vontade MQTT.
+
+    Se o ESP32 perder a conexão abruptamente, o broker
+    publicará "offline" no tópico de status.
+  */
+  bool conectado = clienteMQTT.connect(
+    idCliente,
+    topicoStatus,
+    0,
+    true,
+    "offline"
+  );
+
+  if (conectado) {
+    Serial.println("MQTT conectado!");
+
+    clienteMQTT.publish(
+      topicoStatus,
+      "online",
+      true
+    );
+  } else {
+    Serial.print("Falha na conexao MQTT. Codigo: ");
+    Serial.println(clienteMQTT.state());
+  }
+}
+
+// ==================================================
+// VALIDAÇÃO DOS SENSORES
+// ==================================================
+
+bool dadosValidos(const DadosAmbientais& leitura) {
+  if (leitura.temperatura < -40.0 ||
+      leitura.temperatura > 80.0) {
     return false;
   }
 
-  if (pacote.umidadeAr < 0.0 ||
-      pacote.umidadeAr > 100.0) {
+  if (leitura.umidadeAr < 0.0 ||
+      leitura.umidadeAr > 100.0) {
     return false;
   }
 
-  if (pacote.umidadeSolo < 0 ||
-      pacote.umidadeSolo > 1023) {
+  if (leitura.umidadeSolo < 0 ||
+      leitura.umidadeSolo > 1023) {
     return false;
   }
 
-  if (pacote.luminosidade < 0 ||
-      pacote.luminosidade > 1023) {
+  if (leitura.luminosidade < 0 ||
+      leitura.luminosidade > 1023) {
     return false;
   }
 
-  if (pacote.chuva < 0 ||
-      pacote.chuva > 1023) {
+  if (leitura.chuva < 0 ||
+      leitura.chuva > 1023) {
     return false;
   }
 
@@ -157,157 +225,209 @@ bool validarDados(const DadosAmbientais &pacote) {
 }
 
 // ==================================================
-// PROCESSAMENTO DO PACOTE UART
-//
-// Formato esperado:
-//
-// DADOS,22.6,48.0,1023,462,374
+// PUBLICAÇÃO MQTT
 // ==================================================
 
-void processarLinha(String linha) {
-  linha.trim();
-
-  if (!linha.startsWith("DADOS,")) {
-    Serial.print("Pacote desconhecido: ");
-    Serial.println(linha);
+void publicarDadosMQTT(const DadosAmbientais& leitura) {
+  if (!clienteMQTT.connected()) {
+    Serial.println("MQTT desconectado. Pacote nao publicado.");
     return;
   }
 
-  DadosAmbientais novoPacote;
+  char valor[20];
+
+  // Temperatura
+  snprintf(
+    valor,
+    sizeof(valor),
+    "%.1f",
+    leitura.temperatura
+  );
+
+  clienteMQTT.publish(
+    topicoTemperatura,
+    valor,
+    true
+  );
+
+  // Umidade do ar
+  snprintf(
+    valor,
+    sizeof(valor),
+    "%.1f",
+    leitura.umidadeAr
+  );
+
+  clienteMQTT.publish(
+    topicoUmidadeAr,
+    valor,
+    true
+  );
+
+  // Umidade do solo
+  snprintf(
+    valor,
+    sizeof(valor),
+    "%d",
+    leitura.umidadeSolo
+  );
+
+  clienteMQTT.publish(
+    topicoUmidadeSolo,
+    valor,
+    true
+  );
+
+  // Luminosidade
+  snprintf(
+    valor,
+    sizeof(valor),
+    "%d",
+    leitura.luminosidade
+  );
+
+  clienteMQTT.publish(
+    topicoLuminosidade,
+    valor,
+    true
+  );
+
+  // Chuva
+  snprintf(
+    valor,
+    sizeof(valor),
+    "%d",
+    leitura.chuva
+  );
+
+  clienteMQTT.publish(
+    topicoChuva,
+    valor,
+    true
+  );
+
+  // Publicação de todos os sensores em JSON.
+  char json[200];
+
+  snprintf(
+    json,
+    sizeof(json),
+    "{\"temperatura\":%.1f,"
+    "\"umidade_ar\":%.1f,"
+    "\"umidade_solo\":%d,"
+    "\"luminosidade\":%d,"
+    "\"chuva\":%d}",
+    leitura.temperatura,
+    leitura.umidadeAr,
+    leitura.umidadeSolo,
+    leitura.luminosidade,
+    leitura.chuva
+  );
+
+  bool publicado = clienteMQTT.publish(
+    topicoDados,
+    json,
+    true
+  );
+
+  if (publicado) {
+    Serial.println("Dados publicados no MQTT:");
+    Serial.println(json);
+  } else {
+    Serial.println("Erro ao publicar pacote MQTT.");
+  }
+}
+
+// ==================================================
+// PROCESSAMENTO DA LINHA RECEBIDA
+// ==================================================
+
+void processarLinhaUART(const char* linha) {
+  Serial.println();
+  Serial.print("UART recebida: ");
+  Serial.println(linha);
+
+  DadosAmbientais novaLeitura;
 
   int quantidadeLida = sscanf(
-    linha.c_str(),
+    linha,
     "DADOS,%f,%f,%d,%d,%d",
-    &novoPacote.temperatura,
-    &novoPacote.umidadeAr,
-    &novoPacote.umidadeSolo,
-    &novoPacote.luminosidade,
-    &novoPacote.chuva
+    &novaLeitura.temperatura,
+    &novaLeitura.umidadeAr,
+    &novaLeitura.umidadeSolo,
+    &novaLeitura.luminosidade,
+    &novaLeitura.chuva
   );
 
   if (quantidadeLida != 5) {
-    Serial.print("Erro ao interpretar pacote: ");
-    Serial.println(linha);
+    Serial.println("Pacote UART invalido.");
     return;
   }
 
-  novoPacote.valido = validarDados(novoPacote);
-
-  if (!novoPacote.valido) {
-    Serial.print("Pacote fora dos limites: ");
-    Serial.println(linha);
+  if (!dadosValidos(novaLeitura)) {
+    Serial.println("Pacote rejeitado: valores fora do intervalo.");
     return;
   }
 
-  dados = novoPacote;
-  momentoUltimoPacote = millis();
+  dados = novaLeitura;
+
+  Serial.println("====================================");
+  Serial.println("PACOTE AMBIENTAL VALIDO");
+  Serial.println("====================================");
+
+  Serial.print("Temperatura: ");
+  Serial.print(dados.temperatura);
+  Serial.println(" C");
+
+  Serial.print("Umidade do ar: ");
+  Serial.print(dados.umidadeAr);
+  Serial.println(" %");
+
+  Serial.print("Umidade do solo: ");
+  Serial.println(dados.umidadeSolo);
+
+  Serial.print("Luminosidade: ");
+  Serial.println(dados.luminosidade);
+
+  Serial.print("Chuva: ");
+  Serial.println(dados.chuva);
+
+  publicarDadosMQTT(dados);
 }
 
 // ==================================================
-// RECEPÇÃO UART
+// LEITURA NÃO BLOQUEANTE DA UART
 // ==================================================
 
-void receberDadosArduino() {
-  while (SerialArduino.available()) {
-    char caractere = SerialArduino.read();
+void receberUART() {
+  while (SerialSensores.available()) {
+    char caractere = SerialSensores.read();
+
+    if (caractere == '\r') {
+      continue;
+    }
 
     if (caractere == '\n') {
-      if (linhaRecebida.length() > 0) {
-        processarLinha(linhaRecebida);
-        linhaRecebida = "";
-      }
-    } else if (caractere != '\r') {
-      linhaRecebida += caractere;
+      if (indiceLinha > 0) {
+        linhaUART[indiceLinha] = '\0';
 
-      if (linhaRecebida.length() > 150) {
-        linhaRecebida = "";
-        Serial.println("Pacote UART descartado: muito grande.");
+        processarLinhaUART(linhaUART);
+
+        indiceLinha = 0;
       }
+
+      continue;
     }
-  }
-}
 
-// ==================================================
-// VERIFICAÇÃO DA ETHERNET
-// ==================================================
-
-void verificarEthernet() {
-  if (millis() - momentoUltimaVerificacaoEthernet <
-      INTERVALO_ETHERNET) {
-    return;
-  }
-
-  momentoUltimaVerificacaoEthernet = millis();
-
-  if (Ethernet.hardwareStatus() == EthernetNoHardware) {
-    Serial.println("ERRO: W5500 nao detectado.");
-    return;
-  }
-
-  if (Ethernet.linkStatus() == LinkOFF) {
-    Serial.println("ALERTA: cabo Ethernet desconectado.");
-    return;
-  }
-}
-
-// ==================================================
-// EXIBIÇÃO DOS DADOS
-// ==================================================
-
-void mostrarDados() {
-  Serial.println();
-  Serial.println("====================================");
-  Serial.println("GATEWAY AMBIENTAL");
-  Serial.println("====================================");
-
-  if (!dados.valido) {
-    Serial.println("Aguardando dados validos do Arduino...");
-  } else {
-    unsigned long tempoSemPacote =
-      millis() - momentoUltimoPacote;
-
-    if (tempoSemPacote > TEMPO_LIMITE_UART) {
-      Serial.println("UART: sem resposta do Arduino");
+    if (indiceLinha < sizeof(linhaUART) - 1) {
+      linhaUART[indiceLinha] = caractere;
+      indiceLinha++;
     } else {
-      Serial.println("UART: Arduino conectado");
+      // Evita ultrapassar o tamanho do buffer.
+      indiceLinha = 0;
+      Serial.println("Erro: linha UART muito grande.");
     }
-
-    Serial.println("------------------------------------");
-
-    Serial.print("Temperatura: ");
-    Serial.print(dados.temperatura, 1);
-    Serial.println(" C");
-
-    Serial.print("Umidade do ar: ");
-    Serial.print(dados.umidadeAr, 1);
-    Serial.println(" %");
-
-    Serial.print("Umidade do solo: ");
-    Serial.println(dados.umidadeSolo);
-
-    Serial.print("Luminosidade: ");
-    Serial.println(dados.luminosidade);
-
-    Serial.print("Chuva: ");
-    Serial.println(dados.chuva);
   }
-
-  Serial.println("------------------------------------");
-
-  Serial.print("W5500: ");
-
-  if (Ethernet.hardwareStatus() == EthernetNoHardware) {
-    Serial.println("nao detectado");
-  } else if (Ethernet.linkStatus() == LinkOFF) {
-    Serial.println("cabo desconectado");
-  } else {
-    Serial.println("conectado");
-
-    Serial.print("IP: ");
-    Serial.println(Ethernet.localIP());
-  }
-
-  Serial.println("====================================");
 }
 
 // ==================================================
@@ -317,24 +437,29 @@ void mostrarDados() {
 void setup() {
   Serial.begin(115200);
 
-  SerialArduino.begin(
-    9600,
-    SERIAL_8N1,
-    PINO_RX_ARDUINO,
-    PINO_TX_ARDUINO
-  );
-
-  dados.valido = false;
-
   delay(1000);
 
   Serial.println();
-  Serial.println("Iniciando Gateway Ambiental...");
+  Serial.println("====================================");
+  Serial.println("GATEWAY AMBIENTAL ESP32");
+  Serial.println("UART + W5500 + MQTT");
+  Serial.println("====================================");
+
+  SerialSensores.begin(
+    9600,
+    SERIAL_8N1,
+    PINO_UART_RX,
+    PINO_UART_TX
+  );
 
   iniciarEthernet();
 
-  Serial.println();
-  Serial.println("Aguardando pacotes do Arduino...");
+  clienteMQTT.setServer(
+    ipBroker,
+    portaMQTT
+  );
+
+  conectarMQTT();
 }
 
 // ==================================================
@@ -342,17 +467,15 @@ void setup() {
 // ==================================================
 
 void loop() {
-  receberDadosArduino();
-
+  // Mantém a concessão DHCP.
   Ethernet.maintain();
 
-  verificarEthernet();
+  // Tenta reconectar caso o MQTT seja desconectado.
+  conectarMQTT();
 
-  if (millis() - momentoUltimaExibicao >=
-      INTERVALO_EXIBICAO) {
+  // Mantém a comunicação MQTT funcionando.
+  clienteMQTT.loop();
 
-    momentoUltimaExibicao = millis();
-
-    mostrarDados();
-  }
+  // Recebe e processa os sensores enviados pelo Arduino.
+  receberUART();
 }
