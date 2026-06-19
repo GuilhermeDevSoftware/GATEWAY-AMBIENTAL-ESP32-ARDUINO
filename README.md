@@ -442,7 +442,7 @@ Node-RED
  └── Banco de dados
 ```
 
-**Status:** pendente.
+**Status:** Iniciando banco de dados.
 
 ---
 
