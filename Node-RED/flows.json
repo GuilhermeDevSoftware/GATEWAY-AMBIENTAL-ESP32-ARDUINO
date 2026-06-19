@@ -1,0 +1,1218 @@
+[
+    {
+        "id": "e56366e249ffa3a8",
+        "type": "tab",
+        "label": "Fluxo 1",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "c545d36fdaa2967a",
+        "type": "mqtt-broker",
+        "name": "Mosquitto Local",
+        "broker": "127.0.0.1",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "54116eb1941c8037",
+        "type": "ui-base",
+        "name": "My Dashboard",
+        "path": "/dashboard",
+        "appIcon": "",
+        "includeClientData": true,
+        "acceptsClientConfig": [
+            "ui-notification",
+            "ui-control"
+        ],
+        "showPathInSidebar": false,
+        "headerContent": "page",
+        "navigationStyle": "default",
+        "titleBarStyle": "default",
+        "showReconnectNotification": true,
+        "notificationDisplayTime": 1,
+        "showDisconnectNotification": true,
+        "allowInstall": false
+    },
+    {
+        "id": "553bcb2d1080ca0b",
+        "type": "ui-theme",
+        "name": "Default Theme",
+        "colors": {
+            "surface": "#ffffff",
+            "primary": "#0094CE",
+            "bgPage": "#eeeeee",
+            "groupBg": "#ffffff",
+            "groupOutline": "#cccccc"
+        },
+        "sizes": {
+            "density": "default",
+            "pagePadding": "12px",
+            "groupGap": "12px",
+            "groupBorderRadius": "4px",
+            "widgetGap": "12px"
+        }
+    },
+    {
+        "id": "c082cb7674871c4d",
+        "type": "ui-page",
+        "name": "Page 1",
+        "ui": "54116eb1941c8037",
+        "path": "/page1",
+        "icon": "home",
+        "layout": "grid",
+        "theme": "553bcb2d1080ca0b",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": 0,
+                "cols": 3
+            },
+            {
+                "name": "Tablet",
+                "px": 576,
+                "cols": 6
+            },
+            {
+                "name": "Small Desktop",
+                "px": 768,
+                "cols": 9
+            },
+            {
+                "name": "Desktop",
+                "px": 1024,
+                "cols": 12
+            }
+        ],
+        "order": 1,
+        "className": "",
+        "visible": "true",
+        "disabled": "false"
+    },
+    {
+        "id": "c611dd1accaa6ff8",
+        "type": "ui-group",
+        "name": "Group 1",
+        "page": "c082cb7674871c4d",
+        "width": 6,
+        "height": 1,
+        "order": 1,
+        "showTitle": true,
+        "className": "",
+        "visible": true,
+        "disabled": false,
+        "groupType": "default"
+    },
+    {
+        "id": "f0b5b38b4b921457",
+        "type": "mqtt in",
+        "z": "e56366e249ffa3a8",
+        "name": "Sensores Gateway",
+        "topic": "gateway/ambiental/#",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "c545d36fdaa2967a",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 390,
+        "y": 200,
+        "wires": [
+            [
+                "8a0d007dcda53c38"
+            ]
+        ]
+    },
+    {
+        "id": "8a0d007dcda53c38",
+        "type": "debug",
+        "z": "e56366e249ffa3a8",
+        "name": "debug 1",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 620,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "b2095cc4d524e86a",
+        "type": "ui-gauge",
+        "z": "e56366e249ffa3a8",
+        "name": "Gauge Temperatura",
+        "group": "c611dd1accaa6ff8",
+        "order": 5,
+        "value": "payload",
+        "valueType": "msg",
+        "width": 3,
+        "height": 3,
+        "gtype": "gauge-half",
+        "gstyle": "needle",
+        "title": "gauge",
+        "alwaysShowTitle": false,
+        "floatingTitlePosition": "top-left",
+        "units": "units",
+        "icon": "",
+        "prefix": "",
+        "suffix": "",
+        "segments": [
+            {
+                "from": "0",
+                "color": "#5cd65c",
+                "text": "",
+                "textType": "label"
+            },
+            {
+                "from": "30",
+                "color": "#ffc800",
+                "text": "",
+                "textType": "label"
+            },
+            {
+                "from": "40",
+                "color": "#ea5353",
+                "text": "",
+                "textType": "label"
+            }
+        ],
+        "min": 0,
+        "max": "50",
+        "sizeThickness": 16,
+        "sizeGap": 4,
+        "sizeKeyThickness": 8,
+        "styleRounded": true,
+        "styleGlow": false,
+        "className": "",
+        "x": 400,
+        "y": 400,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "f678a51b60244600",
+        "type": "ui-chart",
+        "z": "e56366e249ffa3a8",
+        "group": "c611dd1accaa6ff8",
+        "name": "Chart Temperatura",
+        "label": "Temperatura",
+        "order": 8,
+        "chartType": "line",
+        "category": "topic",
+        "categoryType": "msg",
+        "xAxisLabel": "",
+        "xAxisProperty": "",
+        "xAxisPropertyType": "timestamp",
+        "xAxisType": "time",
+        "xAxisFormat": "",
+        "xAxisFormatType": "auto",
+        "xmin": "",
+        "xmax": "",
+        "yAxisLabel": "",
+        "yAxisProperty": "payload",
+        "yAxisPropertyType": "msg",
+        "ymin": "0",
+        "ymax": "50",
+        "bins": 10,
+        "action": "append",
+        "stackSeries": false,
+        "pointShape": "circle",
+        "pointRadius": 4,
+        "showLegend": true,
+        "removeOlder": "5",
+        "removeOlderUnit": "60",
+        "removeOlderPoints": "",
+        "colors": [
+            "#0095ff",
+            "#ff0000",
+            "#ff7f0e",
+            "#2ca02c",
+            "#a347e1",
+            "#d62728",
+            "#ff9896",
+            "#9467bd",
+            "#c5b0d5"
+        ],
+        "textColor": [
+            "#666666"
+        ],
+        "textColorDefault": true,
+        "gridColor": [
+            "#e5e5e5"
+        ],
+        "gridColorDefault": true,
+        "width": 6,
+        "height": "4",
+        "className": "",
+        "interpolation": "linear",
+        "x": 390,
+        "y": 320,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "0af6fe6f8dd9a8c2",
+        "type": "ui-text",
+        "z": "e56366e249ffa3a8",
+        "group": "c611dd1accaa6ff8",
+        "order": 13,
+        "width": "3",
+        "height": "1",
+        "name": "Text Temperatura",
+        "label": "Temperatura",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#717171",
+        "wrapText": false,
+        "className": "",
+        "value": "payload",
+        "valueType": "msg",
+        "x": 610,
+        "y": 460,
+        "wires": []
+    },
+    {
+        "id": "6cb181141e391391",
+        "type": "mqtt in",
+        "z": "e56366e249ffa3a8",
+        "name": "MQTT Temperatura",
+        "topic": "gateway/ambiental/temperatura",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "c545d36fdaa2967a",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 400,
+        "wires": [
+            [
+                "b2095cc4d524e86a",
+                "f678a51b60244600",
+                "9bec8172c009b7c5",
+                "86dc2507d09a5b90",
+                "57d317c8b2171882"
+            ]
+        ]
+    },
+    {
+        "id": "36876d076be56780",
+        "type": "mqtt in",
+        "z": "e56366e249ffa3a8",
+        "name": "MQTT Umidade Ar",
+        "topic": "gateway/ambiental/umidade_ar",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "c545d36fdaa2967a",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 170,
+        "y": 1000,
+        "wires": [
+            [
+                "ca85e1d7b410cbe4",
+                "d2bc4fb822c4cdf2",
+                "d061b24c11c78483",
+                "86dc2507d09a5b90",
+                "57d317c8b2171882"
+            ]
+        ]
+    },
+    {
+        "id": "b3c8288f9bbe263c",
+        "type": "mqtt in",
+        "z": "e56366e249ffa3a8",
+        "name": "MQTT Umidade Solo",
+        "topic": "gateway/ambiental/umidade_solo",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "c545d36fdaa2967a",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 600,
+        "wires": [
+            [
+                "d22f622cc0c09419",
+                "1ab01420b0c295bf",
+                "19f867965c3dd767",
+                "86dc2507d09a5b90",
+                "57d317c8b2171882"
+            ]
+        ]
+    },
+    {
+        "id": "2798c77f3d920b6c",
+        "type": "mqtt in",
+        "z": "e56366e249ffa3a8",
+        "name": "MQTT Luminosidade",
+        "topic": "gateway/ambiental/luminosidade",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "c545d36fdaa2967a",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 170,
+        "y": 1180,
+        "wires": [
+            [
+                "0b06c06a8b3b610a",
+                "32eba4d3634af43c",
+                "4637ce9b167c3c16",
+                "86dc2507d09a5b90",
+                "57d317c8b2171882"
+            ]
+        ]
+    },
+    {
+        "id": "ca85e1d7b410cbe4",
+        "type": "ui-gauge",
+        "z": "e56366e249ffa3a8",
+        "name": "Gauge Umidade Ar",
+        "group": "c611dd1accaa6ff8",
+        "order": 7,
+        "value": "payload",
+        "valueType": "msg",
+        "width": 3,
+        "height": 3,
+        "gtype": "gauge-half",
+        "gstyle": "needle",
+        "title": "gauge",
+        "alwaysShowTitle": false,
+        "floatingTitlePosition": "top-left",
+        "units": "units",
+        "icon": "",
+        "prefix": "",
+        "suffix": "",
+        "segments": [
+            {
+                "from": "0",
+                "color": "#5cd65c",
+                "text": "",
+                "textType": "label"
+            },
+            {
+                "from": "30",
+                "color": "#ffc800",
+                "text": "",
+                "textType": "label"
+            },
+            {
+                "from": "50",
+                "color": "#ea5353",
+                "text": "",
+                "textType": "label"
+            }
+        ],
+        "min": 0,
+        "max": "100",
+        "sizeThickness": 16,
+        "sizeGap": 4,
+        "sizeKeyThickness": 8,
+        "styleRounded": true,
+        "styleGlow": false,
+        "className": "",
+        "x": 390,
+        "y": 1000,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "d22f622cc0c09419",
+        "type": "ui-gauge",
+        "z": "e56366e249ffa3a8",
+        "name": "Gauge Umidade Solo",
+        "group": "c611dd1accaa6ff8",
+        "order": 6,
+        "value": "payload",
+        "valueType": "msg",
+        "width": 3,
+        "height": 3,
+        "gtype": "gauge-half",
+        "gstyle": "needle",
+        "title": "gauge",
+        "alwaysShowTitle": false,
+        "floatingTitlePosition": "top-left",
+        "units": "units",
+        "icon": "",
+        "prefix": "",
+        "suffix": "",
+        "segments": [
+            {
+                "from": "0",
+                "color": "#5cd65c",
+                "text": "",
+                "textType": "label"
+            },
+            {
+                "from": "400",
+                "color": "#ffc800",
+                "text": "",
+                "textType": "label"
+            },
+            {
+                "from": "800",
+                "color": "#ea5353",
+                "text": "",
+                "textType": "label"
+            }
+        ],
+        "min": 0,
+        "max": "1023",
+        "sizeThickness": 16,
+        "sizeGap": 4,
+        "sizeKeyThickness": 8,
+        "styleRounded": true,
+        "styleGlow": false,
+        "className": "",
+        "x": 400,
+        "y": 600,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "0b06c06a8b3b610a",
+        "type": "ui-gauge",
+        "z": "e56366e249ffa3a8",
+        "name": "Gauge Luminosidade",
+        "group": "c611dd1accaa6ff8",
+        "order": 4,
+        "value": "payload",
+        "valueType": "msg",
+        "width": 3,
+        "height": 3,
+        "gtype": "gauge-half",
+        "gstyle": "needle",
+        "title": "gauge",
+        "alwaysShowTitle": false,
+        "floatingTitlePosition": "top-left",
+        "units": "units",
+        "icon": "",
+        "prefix": "",
+        "suffix": "",
+        "segments": [
+            {
+                "from": "0",
+                "color": "#5cd65c",
+                "text": "",
+                "textType": "label"
+            },
+            {
+                "from": "300",
+                "color": "#ffc800",
+                "text": "",
+                "textType": "label"
+            },
+            {
+                "from": "700",
+                "color": "#ea5353",
+                "text": "",
+                "textType": "label"
+            }
+        ],
+        "min": 0,
+        "max": "1023",
+        "sizeThickness": 16,
+        "sizeGap": 4,
+        "sizeKeyThickness": 8,
+        "styleRounded": true,
+        "styleGlow": false,
+        "className": "",
+        "x": 420,
+        "y": 1180,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "6b7e729b70c6fd4c",
+        "type": "ui-gauge",
+        "z": "e56366e249ffa3a8",
+        "name": "Gauge Chuva",
+        "group": "c611dd1accaa6ff8",
+        "order": 3,
+        "value": "payload",
+        "valueType": "msg",
+        "width": 3,
+        "height": 3,
+        "gtype": "gauge-half",
+        "gstyle": "needle",
+        "title": "gauge",
+        "alwaysShowTitle": false,
+        "floatingTitlePosition": "top-left",
+        "units": "units",
+        "icon": "",
+        "prefix": "",
+        "suffix": "",
+        "segments": [
+            {
+                "from": "0",
+                "color": "#5cd65c",
+                "text": "",
+                "textType": "label"
+            },
+            {
+                "from": "400",
+                "color": "#ffc800",
+                "text": "",
+                "textType": "label"
+            },
+            {
+                "from": "800",
+                "color": "#ea5353",
+                "text": "",
+                "textType": "label"
+            }
+        ],
+        "min": 0,
+        "max": "1023",
+        "sizeThickness": 16,
+        "sizeGap": 4,
+        "sizeKeyThickness": 8,
+        "styleRounded": true,
+        "styleGlow": false,
+        "className": "",
+        "x": 420,
+        "y": 800,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "6f34c5d2e63848fb",
+        "type": "mqtt in",
+        "z": "e56366e249ffa3a8",
+        "name": "MQTT Chuva",
+        "topic": "gateway/ambiental/chuva",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "c545d36fdaa2967a",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 130,
+        "y": 800,
+        "wires": [
+            [
+                "6b7e729b70c6fd4c",
+                "ad3c84c48c5315f4",
+                "5d34596d78ac185d",
+                "86dc2507d09a5b90",
+                "57d317c8b2171882"
+            ]
+        ]
+    },
+    {
+        "id": "d2bc4fb822c4cdf2",
+        "type": "ui-chart",
+        "z": "e56366e249ffa3a8",
+        "group": "c611dd1accaa6ff8",
+        "name": "Chart Umidade Ar",
+        "label": "Umidade do Ar",
+        "order": 9,
+        "chartType": "line",
+        "category": "topic",
+        "categoryType": "msg",
+        "xAxisLabel": "",
+        "xAxisProperty": "",
+        "xAxisPropertyType": "timestamp",
+        "xAxisType": "time",
+        "xAxisFormat": "",
+        "xAxisFormatType": "auto",
+        "xmin": "",
+        "xmax": "",
+        "yAxisLabel": "",
+        "yAxisProperty": "payload",
+        "yAxisPropertyType": "msg",
+        "ymin": "0",
+        "ymax": "100",
+        "bins": 10,
+        "action": "append",
+        "stackSeries": false,
+        "pointShape": "circle",
+        "pointRadius": 4,
+        "showLegend": true,
+        "removeOlder": "5",
+        "removeOlderUnit": "60",
+        "removeOlderPoints": "",
+        "colors": [
+            "#0095ff",
+            "#ff0000",
+            "#ff7f0e",
+            "#2ca02c",
+            "#a347e1",
+            "#d62728",
+            "#ff9896",
+            "#9467bd",
+            "#c5b0d5"
+        ],
+        "textColor": [
+            "#666666"
+        ],
+        "textColorDefault": true,
+        "gridColor": [
+            "#e5e5e5"
+        ],
+        "gridColorDefault": true,
+        "width": 6,
+        "height": "4",
+        "className": "",
+        "interpolation": "linear",
+        "x": 390,
+        "y": 940,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "1ab01420b0c295bf",
+        "type": "ui-chart",
+        "z": "e56366e249ffa3a8",
+        "group": "c611dd1accaa6ff8",
+        "name": "Chart Umidade Solo",
+        "label": "Umidade do Solo",
+        "order": 10,
+        "chartType": "line",
+        "category": "topic",
+        "categoryType": "msg",
+        "xAxisLabel": "",
+        "xAxisProperty": "",
+        "xAxisPropertyType": "timestamp",
+        "xAxisType": "time",
+        "xAxisFormat": "",
+        "xAxisFormatType": "auto",
+        "xmin": "",
+        "xmax": "",
+        "yAxisLabel": "",
+        "yAxisProperty": "payload",
+        "yAxisPropertyType": "msg",
+        "ymin": "0",
+        "ymax": "1023",
+        "bins": 10,
+        "action": "append",
+        "stackSeries": false,
+        "pointShape": "circle",
+        "pointRadius": 4,
+        "showLegend": true,
+        "removeOlder": "5",
+        "removeOlderUnit": "60",
+        "removeOlderPoints": "",
+        "colors": [
+            "#0095ff",
+            "#ff0000",
+            "#ff7f0e",
+            "#2ca02c",
+            "#a347e1",
+            "#d62728",
+            "#ff9896",
+            "#9467bd",
+            "#c5b0d5"
+        ],
+        "textColor": [
+            "#666666"
+        ],
+        "textColorDefault": true,
+        "gridColor": [
+            "#e5e5e5"
+        ],
+        "gridColorDefault": true,
+        "width": 6,
+        "height": "4",
+        "className": "",
+        "interpolation": "linear",
+        "x": 400,
+        "y": 540,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "32eba4d3634af43c",
+        "type": "ui-chart",
+        "z": "e56366e249ffa3a8",
+        "group": "c611dd1accaa6ff8",
+        "name": "Umidade do Solo",
+        "label": "Luminosidade",
+        "order": 11,
+        "chartType": "line",
+        "category": "topic",
+        "categoryType": "msg",
+        "xAxisLabel": "",
+        "xAxisProperty": "",
+        "xAxisPropertyType": "timestamp",
+        "xAxisType": "time",
+        "xAxisFormat": "",
+        "xAxisFormatType": "auto",
+        "xmin": "",
+        "xmax": "",
+        "yAxisLabel": "",
+        "yAxisProperty": "payload",
+        "yAxisPropertyType": "msg",
+        "ymin": "0",
+        "ymax": "1023",
+        "bins": 10,
+        "action": "append",
+        "stackSeries": false,
+        "pointShape": "circle",
+        "pointRadius": 4,
+        "showLegend": true,
+        "removeOlder": "5",
+        "removeOlderUnit": "60",
+        "removeOlderPoints": "",
+        "colors": [
+            "#0095ff",
+            "#ff0000",
+            "#ff7f0e",
+            "#2ca02c",
+            "#a347e1",
+            "#d62728",
+            "#ff9896",
+            "#9467bd",
+            "#c5b0d5"
+        ],
+        "textColor": [
+            "#666666"
+        ],
+        "textColorDefault": true,
+        "gridColor": [
+            "#e5e5e5"
+        ],
+        "gridColorDefault": true,
+        "width": 6,
+        "height": "4",
+        "className": "",
+        "interpolation": "linear",
+        "x": 410,
+        "y": 1120,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "ad3c84c48c5315f4",
+        "type": "ui-chart",
+        "z": "e56366e249ffa3a8",
+        "group": "c611dd1accaa6ff8",
+        "name": "Chart Chuva",
+        "label": "Chuva",
+        "order": 12,
+        "chartType": "line",
+        "category": "topic",
+        "categoryType": "msg",
+        "xAxisLabel": "",
+        "xAxisProperty": "",
+        "xAxisPropertyType": "timestamp",
+        "xAxisType": "time",
+        "xAxisFormat": "",
+        "xAxisFormatType": "auto",
+        "xmin": "",
+        "xmax": "",
+        "yAxisLabel": "",
+        "yAxisProperty": "payload",
+        "yAxisPropertyType": "msg",
+        "ymin": "0",
+        "ymax": "1023",
+        "bins": 10,
+        "action": "append",
+        "stackSeries": false,
+        "pointShape": "circle",
+        "pointRadius": 4,
+        "showLegend": true,
+        "removeOlder": "5",
+        "removeOlderUnit": "60",
+        "removeOlderPoints": "",
+        "colors": [
+            "#0095ff",
+            "#ff0000",
+            "#ff7f0e",
+            "#2ca02c",
+            "#a347e1",
+            "#d62728",
+            "#ff9896",
+            "#9467bd",
+            "#c5b0d5"
+        ],
+        "textColor": [
+            "#666666"
+        ],
+        "textColorDefault": true,
+        "gridColor": [
+            "#e5e5e5"
+        ],
+        "gridColorDefault": true,
+        "width": 6,
+        "height": "4",
+        "className": "",
+        "interpolation": "linear",
+        "x": 410,
+        "y": 740,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "11ad3b4562f54e0b",
+        "type": "ui-text",
+        "z": "e56366e249ffa3a8",
+        "group": "c611dd1accaa6ff8",
+        "order": 2,
+        "width": "3",
+        "height": "1",
+        "name": "Text Umidade Ar",
+        "label": "Umidade do ar",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#717171",
+        "wrapText": false,
+        "className": "",
+        "value": "payload",
+        "valueType": "msg",
+        "x": 600,
+        "y": 1060,
+        "wires": []
+    },
+    {
+        "id": "d9116044b21e24ca",
+        "type": "ui-text",
+        "z": "e56366e249ffa3a8",
+        "group": "c611dd1accaa6ff8",
+        "order": 15,
+        "width": "3",
+        "height": "1",
+        "name": "Text Umidade Solo",
+        "label": "Umidade do solo",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#717171",
+        "wrapText": false,
+        "className": "",
+        "value": "payload",
+        "valueType": "msg",
+        "x": 630,
+        "y": 660,
+        "wires": []
+    },
+    {
+        "id": "927119972b373d1b",
+        "type": "ui-text",
+        "z": "e56366e249ffa3a8",
+        "group": "c611dd1accaa6ff8",
+        "order": 14,
+        "width": "3",
+        "height": "1",
+        "name": "Text Luminosidade",
+        "label": "Luminosidade",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#717171",
+        "wrapText": false,
+        "className": "",
+        "value": "payload",
+        "valueType": "msg",
+        "x": 650,
+        "y": 1240,
+        "wires": []
+    },
+    {
+        "id": "800d6137b1e08436",
+        "type": "ui-text",
+        "z": "e56366e249ffa3a8",
+        "group": "c611dd1accaa6ff8",
+        "order": 1,
+        "width": "3",
+        "height": "1",
+        "name": "Text Chuva",
+        "label": "Sensor de chuva",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#717171",
+        "wrapText": false,
+        "className": "",
+        "value": "payload",
+        "valueType": "msg",
+        "x": 590,
+        "y": 860,
+        "wires": []
+    },
+    {
+        "id": "9bec8172c009b7c5",
+        "type": "function",
+        "z": "e56366e249ffa3a8",
+        "name": "Formatar Temperatura",
+        "func": "msg.payload = msg.payload + \" °C\";\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 400,
+        "y": 460,
+        "wires": [
+            [
+                "0af6fe6f8dd9a8c2"
+            ]
+        ]
+    },
+    {
+        "id": "19f867965c3dd767",
+        "type": "function",
+        "z": "e56366e249ffa3a8",
+        "name": "Formatar Umidade Solo",
+        "func": "msg.payload = msg.payload + \" ADC\";\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 410,
+        "y": 660,
+        "wires": [
+            [
+                "d9116044b21e24ca"
+            ]
+        ]
+    },
+    {
+        "id": "5d34596d78ac185d",
+        "type": "function",
+        "z": "e56366e249ffa3a8",
+        "name": "Formatar Chuva",
+        "func": "let valor = Number(msg.payload);\n\nif (valor >= 800) {\n    msg.payload = \"Seco\";\n} else if (valor >= 400) {\n    msg.payload = \"Úmido / Atenção\";\n} else {\n    msg.payload = \"Chuva detectada\";\n}\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 860,
+        "wires": [
+            [
+                "800d6137b1e08436"
+            ]
+        ]
+    },
+    {
+        "id": "d061b24c11c78483",
+        "type": "function",
+        "z": "e56366e249ffa3a8",
+        "name": "Formatar Umidade Ar",
+        "func": "msg.payload = msg.payload + \" %\";\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 400,
+        "y": 1060,
+        "wires": [
+            [
+                "11ad3b4562f54e0b"
+            ]
+        ]
+    },
+    {
+        "id": "4637ce9b167c3c16",
+        "type": "function",
+        "z": "e56366e249ffa3a8",
+        "name": "Formatar Luminosidade",
+        "func": "msg.payload = msg.payload + \" ADC\";\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 430,
+        "y": 1240,
+        "wires": [
+            [
+                "927119972b373d1b"
+            ]
+        ]
+    },
+    {
+        "id": "86dc2507d09a5b90",
+        "type": "function",
+        "z": "e56366e249ffa3a8",
+        "name": "Function Gerar linha CSV",
+        "func": "let topico = (msg.topic || \"\").toLowerCase();\nlet valor = Number(msg.payload);\n\nlet dados = flow.get(\"dadosCSV\") || {};\n\nnode.status({\n    fill: \"blue\",\n    shape: \"dot\",\n    text: topico + \" = \" + valor\n});\n\nif (topico.includes(\"temperatura\")) {\n    dados.temperatura = valor;\n}\n\nelse if (topico.includes(\"umidade\") && topico.includes(\"solo\")) {\n    dados.umidadeSolo = valor;\n}\n\nelse if (topico.includes(\"umidade\")) {\n    dados.umidadeAr = valor;\n}\n\nelse if (topico.includes(\"luminosidade\")) {\n    dados.luminosidade = valor;\n}\n\nelse if (topico.includes(\"chuva\")) {\n    dados.chuva = valor;\n}\n\nflow.set(\"dadosCSV\", dados);\n\nif (\n    dados.temperatura !== undefined &&\n    dados.umidadeAr !== undefined &&\n    dados.umidadeSolo !== undefined &&\n    dados.luminosidade !== undefined &&\n    dados.chuva !== undefined\n) {\n    let data = new Date().toLocaleString(\"pt-BR\");\n\n    msg.payload =\n        data + \";\" +\n        dados.temperatura + \";\" +\n        dados.umidadeAr + \";\" +\n        dados.umidadeSolo + \";\" +\n        dados.luminosidade + \";\" +\n        dados.chuva;\n\n    return msg;\n}\n\nnode.warn(\"Aguardando todos os sensores. Recebidos até agora: \" + JSON.stringify(dados));\n\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1070,
+        "y": 720,
+        "wires": [
+            [
+                "94c378e8e27e7042",
+                "eed1951fdb5003a3"
+            ]
+        ]
+    },
+    {
+        "id": "94c378e8e27e7042",
+        "type": "file",
+        "z": "e56366e249ffa3a8",
+        "name": "Salvar CSV",
+        "filename": "C:\\gateway\\dados_gateway.csv",
+        "filenameType": "str",
+        "appendNewline": true,
+        "createDir": true,
+        "overwriteFile": "false",
+        "encoding": "none",
+        "x": 1330,
+        "y": 720,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "eed1951fdb5003a3",
+        "type": "debug",
+        "z": "e56366e249ffa3a8",
+        "name": "debug 2",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1260,
+        "y": 640,
+        "wires": []
+    },
+    {
+        "id": "57d317c8b2171882",
+        "type": "function",
+        "z": "e56366e249ffa3a8",
+        "name": "Verificar alertas",
+        "func": "// Pega o tópico MQTT e o valor recebido\nlet topico = msg.topic;\nlet valor = Number(msg.payload);\n\n// Recupera os últimos dados salvos\nlet dados = flow.get(\"dadosSensores\") || {};\n\n// Identifica qual sensor chegou pelo tópico\nif (topico.includes(\"temperatura\")) {\n    dados.temperatura = valor;\n}\n\nif (topico.includes(\"umidade_ar\") || topico.includes(\"umidadear\") || topico.includes(\"umidade\")) {\n    dados.umidadeAr = valor;\n}\n\nif (topico.includes(\"solo\")) {\n    dados.umidadeSolo = valor;\n}\n\nif (topico.includes(\"luminosidade\") || topico.includes(\"luz\")) {\n    dados.luminosidade = valor;\n}\n\nif (topico.includes(\"chuva\")) {\n    dados.chuva = valor;\n}\n\n// Salva os dados atualizados\nflow.set(\"dadosSensores\", dados);\n\n// Se ainda não recebeu todos os sensores, mostra aguardando\nif (\n    dados.temperatura === undefined ||\n    dados.umidadeAr === undefined ||\n    dados.umidadeSolo === undefined ||\n    dados.luminosidade === undefined ||\n    dados.chuva === undefined\n) {\n    let msgStatus = {\n        payload: \"Aguardando dados de todos os sensores...\"\n    };\n\n    return [msgStatus, null];\n}\n\n// Limites de alerta\nlet limiteTemperaturaAlta = 30;\nlet limiteUmidadeArBaixa = 40;\nlet limiteSoloSeco = 900;\nlet limitePoucaLuz = 300;\nlet limiteChuvaDetectada = 700;\n\n// Lista de alertas\nlet alertas = [];\n\nif (dados.temperatura > limiteTemperaturaAlta) {\n    alertas.push(\"Temperatura alta: \" + dados.temperatura + \" °C\");\n}\n\nif (dados.umidadeAr < limiteUmidadeArBaixa) {\n    alertas.push(\"Umidade do ar baixa: \" + dados.umidadeAr + \" %\");\n}\n\nif (dados.umidadeSolo > limiteSoloSeco) {\n    alertas.push(\"Solo seco: \" + dados.umidadeSolo);\n}\n\nif (dados.luminosidade < limitePoucaLuz) {\n    alertas.push(\"Pouca luminosidade: \" + dados.luminosidade);\n}\n\nif (dados.chuva < limiteChuvaDetectada) {\n    alertas.push(\"Chuva detectada: \" + dados.chuva);\n}\n\n// Mensagem para o dashboard text\nlet msgStatus = {\n    payload: alertas.length === 0\n        ? \"Sistema normal - nenhum alerta ativo\"\n        : \"ALERTA: \" + alertas.join(\" | \")\n};\n\n// Mensagem para debug/notificação\nlet msgAlerta = null;\n\nif (alertas.length > 0) {\n    msgAlerta = {\n        payload: alertas.join(\" | \"),\n        topic: \"Alerta Gateway Ambiental\",\n        dados: dados,\n        horario: new Date().toLocaleString(\"pt-BR\")\n    };\n}\n\nreturn [msgStatus, msgAlerta];",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1060,
+        "y": 920,
+        "wires": [
+            [
+                "46eff76b83fd1a73"
+            ],
+            [
+                "85988d8770a7a390"
+            ]
+        ]
+    },
+    {
+        "id": "46eff76b83fd1a73",
+        "type": "ui-text",
+        "z": "e56366e249ffa3a8",
+        "group": "c611dd1accaa6ff8",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "name": "Status dos alertas",
+        "label": "Status dos alertas",
+        "format": "{{msg.payload}}",
+        "layout": "row-spread",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#717171",
+        "wrapText": false,
+        "className": "",
+        "value": "payload",
+        "valueType": "msg",
+        "x": 1330,
+        "y": 900,
+        "wires": []
+    },
+    {
+        "id": "85988d8770a7a390",
+        "type": "debug",
+        "z": "e56366e249ffa3a8",
+        "name": "debug alertas",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1320,
+        "y": 960,
+        "wires": []
+    },
+    {
+        "id": "f44edf2b2c8d3dad",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "@flowfuse/node-red-dashboard": "1.30.2"
+        }
+    }
+]
