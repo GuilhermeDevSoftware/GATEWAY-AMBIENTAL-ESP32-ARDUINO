@@ -128,6 +128,12 @@
         "groupType": "default"
     },
     {
+        "id": "996b74d139405988",
+        "type": "sqlitedb",
+        "db": "C:\\gateway\\gateway.db",
+        "mode": "RWC"
+    },
+    {
         "id": "f0b5b38b4b921457",
         "type": "mqtt in",
         "z": "e56366e249ffa3a8",
@@ -1208,11 +1214,282 @@
         "wires": []
     },
     {
-        "id": "f44edf2b2c8d3dad",
+        "id": "5223e7ed3080fca0",
+        "type": "inject",
+        "z": "e56366e249ffa3a8",
+        "name": "Criar tabela SQLite",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "str",
+        "x": 810,
+        "y": 340,
+        "wires": [
+            [
+                "5844f183dda63030"
+            ]
+        ]
+    },
+    {
+        "id": "5844f183dda63030",
+        "type": "function",
+        "z": "e56366e249ffa3a8",
+        "name": "SQL criar tabela",
+        "func": "msg.topic = `\nCREATE TABLE IF NOT EXISTS leituras (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    data_hora TEXT DEFAULT (datetime('now','localtime')),\n    temperatura REAL,\n    umidade_ar REAL,\n    umidade_solo INTEGER,\n    luminosidade INTEGER,\n    chuva INTEGER\n);\n`;\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1040,
+        "y": 340,
+        "wires": [
+            [
+                "ae8d1f3b09bd8b4e"
+            ]
+        ]
+    },
+    {
+        "id": "ae8d1f3b09bd8b4e",
+        "type": "sqlite",
+        "z": "e56366e249ffa3a8",
+        "mydb": "996b74d139405988",
+        "sqlquery": "msg.topic",
+        "sql": "",
+        "name": "sqlite",
+        "x": 1230,
+        "y": 340,
+        "wires": [
+            [
+                "465e0451dcd22729"
+            ]
+        ]
+    },
+    {
+        "id": "727ac1cf82126ed9",
+        "type": "debug",
+        "z": "e56366e249ffa3a8",
+        "name": "debug sqlite",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1670,
+        "y": 340,
+        "wires": []
+    },
+    {
+        "id": "9081052bb23135a3",
+        "type": "inject",
+        "z": "e56366e249ffa3a8",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "2",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "str",
+        "x": 1060,
+        "y": 520,
+        "wires": [
+            [
+                "e911c6502d56ee42"
+            ]
+        ]
+    },
+    {
+        "id": "e911c6502d56ee42",
+        "type": "function",
+        "z": "e56366e249ffa3a8",
+        "name": "Buscar últimas leituras",
+        "func": "msg.topic = `\nSELECT *\nFROM leituras\nORDER BY id DESC\nLIMIT 10;\n`;\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1240,
+        "y": 520,
+        "wires": [
+            [
+                "ae8d1f3b09bd8b4e"
+            ]
+        ]
+    },
+    {
+        "id": "561c17d8cf3c63fd",
+        "type": "function",
+        "z": "e56366e249ffa3a8",
+        "name": "Salvar no SQLite",
+        "func": "let dados = msg.payload;\n\n// Garante que está usando apenas o tópico correto\nif (msg.topic !== \"gateway/ambiental/dados\") {\n    return null;\n}\n\n// Caso o payload venha como texto JSON, converte para objeto\nif (typeof dados === \"string\") {\n    try {\n        dados = JSON.parse(dados);\n    } catch (erro) {\n        node.status({\n            fill: \"red\",\n            shape: \"ring\",\n            text: \"JSON inválido\"\n        });\n        return null;\n    }\n}\n\n// Verifica se veio como objeto\nif (typeof dados !== \"object\" || dados === null) {\n    node.status({\n        fill: \"red\",\n        shape: \"ring\",\n        text: \"payload inválido\"\n    });\n    return null;\n}\n\n// Converte os valores\nlet temperatura = Number(dados.temperatura);\nlet umidade_ar = Number(dados.umidade_ar);\nlet umidade_solo = Number(dados.umidade_solo);\nlet luminosidade = Number(dados.luminosidade);\nlet chuva = Number(dados.chuva);\n\n// Validação\nif (\n    isNaN(temperatura) ||\n    isNaN(umidade_ar) ||\n    isNaN(umidade_solo) ||\n    isNaN(luminosidade) ||\n    isNaN(chuva)\n) {\n    node.status({\n        fill: \"red\",\n        shape: \"ring\",\n        text: \"dados inválidos\"\n    });\n\n    node.warn(dados);\n    return null;\n}\n\n// Gera o comando SQL\nmsg.topic = `\nINSERT INTO leituras (\n    temperatura,\n    umidade_ar,\n    umidade_solo,\n    luminosidade,\n    chuva\n) VALUES (\n    ${temperatura},\n    ${umidade_ar},\n    ${umidade_solo},\n    ${luminosidade},\n    ${chuva}\n);\n`;\n\nnode.status({\n    fill: \"green\",\n    shape: \"dot\",\n    text: \"enviado ao SQLite\"\n});\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 790,
+        "y": 260,
+        "wires": [
+            [
+                "ec525ac3fb71534b"
+            ]
+        ]
+    },
+    {
+        "id": "872b6b21c5f6560a",
+        "type": "mqtt in",
+        "z": "e56366e249ffa3a8",
+        "name": "Dados SQLite",
+        "topic": "gateway/ambiental/dados",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "c545d36fdaa2967a",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 550,
+        "y": 260,
+        "wires": [
+            [
+                "561c17d8cf3c63fd"
+            ]
+        ]
+    },
+    {
+        "id": "465e0451dcd22729",
+        "type": "function",
+        "z": "e56366e249ffa3a8",
+        "name": "Formatar consulta",
+        "func": "let linhas = msg.payload;\n\nif (!linhas || linhas.length === 0) {\n    msg.payload = \"Nenhum registro encontrado no banco.\";\n    return msg;\n}\n\nlet texto = \"Últimas leituras salvas no SQLite:\\n\\n\";\n\nlinhas.forEach((linha) => {\n    texto += `ID: ${linha.id}\\n`;\n    texto += `Data/Hora: ${linha.data_hora}\\n`;\n    texto += `Temperatura: ${linha.temperatura} °C\\n`;\n    texto += `Umidade do ar: ${linha.umidade_ar} %\\n`;\n    texto += `Umidade do solo: ${linha.umidade_solo}\\n`;\n    texto += `Luminosidade: ${linha.luminosidade}\\n`;\n    texto += `Chuva: ${linha.chuva}\\n`;\n    texto += \"-------------------------\\n\";\n});\n\nmsg.payload = texto;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1450,
+        "y": 340,
+        "wires": [
+            [
+                "727ac1cf82126ed9"
+            ]
+        ]
+    },
+    {
+        "id": "95cc9f5cadda6297",
+        "type": "sqlite",
+        "z": "e56366e249ffa3a8",
+        "mydb": "996b74d139405988",
+        "sqlquery": "msg.topic",
+        "sql": "",
+        "name": "sqlite gravar",
+        "x": 1070,
+        "y": 260,
+        "wires": [
+            [
+                "0655344413f24532"
+            ]
+        ]
+    },
+    {
+        "id": "0655344413f24532",
+        "type": "function",
+        "z": "e56366e249ffa3a8",
+        "name": "Confirmar gravação",
+        "func": "msg.payload = \"Registro salvo no SQLite com sucesso\";\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1270,
+        "y": 260,
+        "wires": [
+            [
+                "d6bb41adc29ee1f2"
+            ]
+        ]
+    },
+    {
+        "id": "d6bb41adc29ee1f2",
+        "type": "debug",
+        "z": "e56366e249ffa3a8",
+        "name": "debug gravação",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1480,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "ec525ac3fb71534b",
+        "type": "delay",
+        "z": "e56366e249ffa3a8",
+        "name": "",
+        "pauseType": "delay",
+        "timeout": "5",
+        "timeoutUnits": "seconds",
+        "rate": "1",
+        "nbRateUnits": "1",
+        "rateUnits": "second",
+        "randomFirst": "1",
+        "randomLast": "5",
+        "randomUnits": "seconds",
+        "drop": false,
+        "allowrate": false,
+        "outputs": 1,
+        "x": 940,
+        "y": 180,
+        "wires": [
+            [
+                "95cc9f5cadda6297"
+            ]
+        ]
+    },
+    {
+        "id": "1cd0c9c8c3fba40e",
         "type": "global-config",
         "env": [],
         "modules": {
-            "@flowfuse/node-red-dashboard": "1.30.2"
+            "@flowfuse/node-red-dashboard": "1.30.2",
+            "node-red-node-sqlite": "2.0.1"
         }
     }
 ]
