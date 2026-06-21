@@ -75,6 +75,13 @@ WiFiClient clienteWiFi;
 PubSubClient clienteMQTT(clienteEthernet);
 
 // ==================================================
+// SERVIDORES WEB DO GATEWAY
+// ==================================================
+
+EthernetServer servidorWebEthernet(80);
+WiFiServer servidorWebWiFi(80);
+
+// ==================================================
 // PRIORIDADE DE CONEXAO
 // ==================================================
 
@@ -136,6 +143,15 @@ struct DadosAmbientais {
 DadosAmbientais dados;
 
 // ==================================================
+// DIAGNOSTICO DO SISTEMA
+// ==================================================
+
+bool existeLeituraValida = false;
+unsigned long totalPacotesRecebidos = 0;
+unsigned long totalErros = 0;
+unsigned long ultimaLeituraValidaMs = 0;
+
+// ==================================================
 // CONTROLE DO SPI COMPARTILHADO
 // ==================================================
 
@@ -172,6 +188,504 @@ const char* nomeConexao(TipoConexao conexao) {
       return "Wi-Fi";
     default:
       return "Offline";
+  }
+}
+
+
+// ==================================================
+// PAGINA WEB DO GATEWAY
+// ==================================================
+
+String ipParaTexto(IPAddress ip) {
+  return String(ip[0]) + "." + String(ip[1]) + "." + String(ip[2]) + "." + String(ip[3]);
+}
+
+String formatarUptime() {
+  unsigned long segundos = millis() / 1000;
+
+  unsigned long dias = segundos / 86400;
+  segundos %= 86400;
+
+  unsigned long horas = segundos / 3600;
+  segundos %= 3600;
+
+  unsigned long minutos = segundos / 60;
+  segundos %= 60;
+
+  String texto = "";
+
+  if (dias > 0) {
+    texto += String(dias) + "d ";
+  }
+
+  if (horas < 10) texto += "0";
+  texto += String(horas) + ":";
+
+  if (minutos < 10) texto += "0";
+  texto += String(minutos) + ":";
+
+  if (segundos < 10) texto += "0";
+  texto += String(segundos);
+
+  return texto;
+}
+
+String tempoDesdeUltimaLeitura() {
+  if (!existeLeituraValida) {
+    return "Aguardando primeira leitura";
+  }
+
+  unsigned long segundos = (millis() - ultimaLeituraValidaMs) / 1000;
+
+  if (segundos < 60) {
+    return String(segundos) + " s atras";
+  }
+
+  unsigned long minutos = segundos / 60;
+
+  if (minutos < 60) {
+    return String(minutos) + " min atras";
+  }
+
+  unsigned long horas = minutos / 60;
+  return String(horas) + " h atras";
+}
+
+String classeStatus(bool ok) {
+  if (ok) {
+    return "ok";
+  }
+
+  return "erro";
+}
+
+String textoStatus(bool ok) {
+  if (ok) {
+    return "ONLINE";
+  }
+
+  return "OFFLINE";
+}
+
+String estadoEthernetTexto() {
+  if (Ethernet.linkStatus() == LinkON && ethernetComIP && ipValido(Ethernet.localIP())) {
+    return "Conectada";
+  }
+
+  if (Ethernet.linkStatus() == LinkOFF) {
+    return "Cabo desconectado";
+  }
+
+  return "Sem IP / desconhecida";
+}
+
+String estadoWiFiTexto() {
+  if (WiFi.status() == WL_CONNECTED) {
+    if (conexaoAtual == CONEXAO_WIFI) {
+      return "Conectado como reserva ativa";
+    }
+
+    return "Conectado";
+  }
+
+  if (conexaoAtual == CONEXAO_ETHERNET) {
+    return "Standby";
+  }
+
+  return "Desconectado";
+}
+
+String estadoMQTTTexto() {
+  if (clienteMQTT.connected()) {
+    return "Conectado";
+  }
+
+  return "Desconectado";
+}
+
+bool mqttOk() {
+  return clienteMQTT.connected();
+}
+
+bool ethernetOkWeb() {
+  return Ethernet.linkStatus() == LinkON && ethernetComIP && ipValido(Ethernet.localIP());
+}
+
+bool wifiOkWeb() {
+  return WiFi.status() == WL_CONNECTED;
+}
+
+bool sistemaOnline() {
+  return conexaoAtual != CONEXAO_OFFLINE && mqttOk();
+}
+
+void enviarCabecalhoHTML(Client& cliente) {
+  cliente.println("HTTP/1.1 200 OK");
+  cliente.println("Content-Type: text/html; charset=utf-8");
+  cliente.println("Cache-Control: no-store");
+  cliente.println("Connection: close");
+  cliente.println();
+}
+
+void enviarCabecalhoJSON(Client& cliente) {
+  cliente.println("HTTP/1.1 200 OK");
+  cliente.println("Content-Type: application/json; charset=utf-8");
+  cliente.println("Cache-Control: no-store");
+  cliente.println("Connection: close");
+  cliente.println();
+}
+
+void enviarCSSDashboard(Client& cliente) {
+  cliente.println("<style>");
+  cliente.println(":root{--bg:#0f172a;--panel:#111827;--card:#1e293b;--card2:#162033;--border:#334155;--text:#e5e7eb;--muted:#94a3b8;--ok:#22c55e;--warn:#facc15;--err:#ef4444;--blue:#38bdf8;}");
+  cliente.println("*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;background:linear-gradient(135deg,#0f172a,#020617);color:var(--text)}");
+  cliente.println(".wrap{width:min(1180px,94%);margin:0 auto;padding:24px 0 36px}.top{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:22px;padding:18px 20px;border:1px solid var(--border);background:rgba(17,24,39,.92);border-radius:18px;box-shadow:0 20px 50px rgba(0,0,0,.25)}");
+  cliente.println(".brand h1{margin:0;font-size:1.55rem;letter-spacing:.3px}.brand p{margin:6px 0 0;color:var(--muted);font-size:.95rem}.pill{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;font-weight:700;border:1px solid var(--border);background:#0b1220}.dot{width:10px;height:10px;border-radius:50%;display:inline-block}.dot.ok{background:var(--ok);box-shadow:0 0 14px var(--ok)}.dot.warn{background:var(--warn);box-shadow:0 0 14px var(--warn)}.dot.erro{background:var(--err);box-shadow:0 0 14px var(--err)}");
+  cliente.println(".grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px}.grid.sensors{grid-template-columns:repeat(5,1fr)}.card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 14px 34px rgba(0,0,0,.22)}.card h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin:0 0 12px}.value{font-size:1.8rem;font-weight:800;margin:0}.unit{font-size:.95rem;color:var(--muted);font-weight:600}.sub{margin-top:8px;color:var(--muted);font-size:.9rem;word-break:break-word}.statusText{font-size:1.25rem;font-weight:800;margin:0}.okText{color:var(--ok)}.warnText{color:var(--warn)}.errText{color:var(--err)}.blueText{color:var(--blue)}");
+  cliente.println(".section{margin:22px 0 12px;display:flex;justify-content:space-between;align-items:end;gap:12px}.section h2{margin:0;font-size:1.05rem}.section span{color:var(--muted);font-size:.9rem}.table{width:100%;border-collapse:collapse}.table td{padding:10px 0;border-bottom:1px solid rgba(51,65,85,.75)}.table tr:last-child td{border-bottom:0}.table td:first-child{color:var(--muted)}.table td:last-child{text-align:right;font-weight:700}.actions{display:flex;gap:10px;flex-wrap:wrap}.btn{display:inline-block;padding:11px 14px;border-radius:12px;text-decoration:none;color:var(--text);border:1px solid var(--border);background:#0b1220;font-weight:700}.btn.primary{border-color:#0ea5e9;background:rgba(14,165,233,.14);color:#7dd3fc}.footer{margin-top:18px;color:var(--muted);font-size:.85rem;text-align:center}");
+  cliente.println("@media(max-width:900px){.grid,.grid.sensors{grid-template-columns:repeat(2,1fr)}.top{align-items:flex-start;flex-direction:column}.pill{align-self:flex-start}}@media(max-width:560px){.grid,.grid.sensors{grid-template-columns:1fr}.wrap{width:92%;padding-top:16px}.value{font-size:1.55rem}.table td:last-child{text-align:left}.table td{display:block;border-bottom:0;padding:5px 0}.table tr{display:block;border-bottom:1px solid rgba(51,65,85,.75);padding:8px 0}}");
+  cliente.println("</style>");
+}
+
+void enviarCardStatus(Client& cliente, const char* titulo, const String& estado, const String& detalhe, const String& classe) {
+  cliente.println("<div class='card'>");
+  cliente.print("<h2>");
+  cliente.print(titulo);
+  cliente.println("</h2>");
+
+  cliente.print("<p class='statusText ");
+  if (classe == "ok") {
+    cliente.print("okText");
+  } else if (classe == "warn") {
+    cliente.print("warnText");
+  } else {
+    cliente.print("errText");
+  }
+  cliente.print("'><span class='dot ");
+  cliente.print(classe);
+  cliente.print("'></span> ");
+  cliente.print(estado);
+  cliente.println("</p>");
+
+  cliente.print("<div class='sub'>");
+  cliente.print(detalhe);
+  cliente.println("</div>");
+  cliente.println("</div>");
+}
+
+void enviarCardSensor(Client& cliente, const char* titulo, const String& valor, const char* unidade) {
+  cliente.println("<div class='card'>");
+  cliente.print("<h2>");
+  cliente.print(titulo);
+  cliente.println("</h2>");
+  cliente.print("<p class='value'>");
+  cliente.print(valor);
+  if (strlen(unidade) > 0) {
+    cliente.print(" <span class='unit'>");
+    cliente.print(unidade);
+    cliente.print("</span>");
+  }
+  cliente.println("</p>");
+  cliente.println("</div>");
+}
+
+void enviarPaginaPrincipal(Client& cliente) {
+  enviarCabecalhoHTML(cliente);
+
+  String classeGeral = sistemaOnline() ? "ok" : (conexaoAtual != CONEXAO_OFFLINE ? "warn" : "erro");
+  String textoGeral = sistemaOnline() ? "ONLINE" : (conexaoAtual != CONEXAO_OFFLINE ? "REDE SEM MQTT" : "OFFLINE");
+
+  cliente.println("<!DOCTYPE html><html lang='pt-br'><head><meta charset='UTF-8'>");
+  cliente.println("<meta name='viewport' content='width=device-width, initial-scale=1.0'>");
+  cliente.println("<meta http-equiv='refresh' content='5'>");
+  cliente.println("<title>Gateway Ambiental ESP32</title>");
+  enviarCSSDashboard(cliente);
+  cliente.println("</head><body><main class='wrap'>");
+
+  cliente.println("<header class='top'>");
+  cliente.println("<div class='brand'>");
+  cliente.println("<h1>Gateway Ambiental ESP32</h1>");
+  cliente.println("<p>Painel de diagnostico e monitoramento do sistema IoT</p>");
+  cliente.println("</div>");
+  cliente.print("<div class='pill'><span class='dot ");
+  cliente.print(classeGeral);
+  cliente.print("'></span>");
+  cliente.print(textoGeral);
+  cliente.println("</div>");
+  cliente.println("</header>");
+
+  cliente.println("<section class='grid'>");
+
+  String detalheEth = "IP: ";
+  detalheEth += ipValido(Ethernet.localIP()) ? ipParaTexto(Ethernet.localIP()) : "indisponivel";
+  enviarCardStatus(cliente, "Ethernet", estadoEthernetTexto(), detalheEth, ethernetOkWeb() ? "ok" : "erro");
+
+  String detalheWiFi = "IP: ";
+  detalheWiFi += wifiOkWeb() ? ipParaTexto(WiFi.localIP()) : "indisponivel";
+  enviarCardStatus(cliente, "Wi-Fi reserva", estadoWiFiTexto(), detalheWiFi, wifiOkWeb() ? "ok" : (conexaoAtual == CONEXAO_ETHERNET ? "warn" : "erro"));
+
+  String detalheMqtt = "Broker: ";
+  detalheMqtt += ipParaTexto(ipBroker);
+  detalheMqtt += ":";
+  detalheMqtt += String(portaMQTT);
+  enviarCardStatus(cliente, "MQTT", estadoMQTTTexto(), detalheMqtt, mqttOk() ? "ok" : "erro");
+
+  cliente.println("</section>");
+
+  cliente.println("<div class='section'><div><h2>Ultimas leituras ambientais</h2><span>");
+  cliente.print(tempoDesdeUltimaLeitura());
+  cliente.println("</span></div></div>");
+
+  cliente.println("<section class='grid sensors'>");
+  if (existeLeituraValida) {
+    enviarCardSensor(cliente, "Temperatura", String(dados.temperatura, 1), "&deg;C");
+    enviarCardSensor(cliente, "Umidade do ar", String(dados.umidadeAr, 1), "%");
+    enviarCardSensor(cliente, "Umidade do solo", String(dados.umidadeSolo), "ADC");
+    enviarCardSensor(cliente, "Luminosidade", String(dados.luminosidade), "ADC");
+    enviarCardSensor(cliente, "Chuva", String(dados.chuva), "ADC");
+  } else {
+    enviarCardSensor(cliente, "Temperatura", "--", "&deg;C");
+    enviarCardSensor(cliente, "Umidade do ar", "--", "%");
+    enviarCardSensor(cliente, "Umidade do solo", "--", "ADC");
+    enviarCardSensor(cliente, "Luminosidade", "--", "ADC");
+    enviarCardSensor(cliente, "Chuva", "--", "ADC");
+  }
+  cliente.println("</section>");
+
+  cliente.println("<div class='section'><div><h2>Diagnostico tecnico</h2><span>Informacoes internas do gateway</span></div></div>");
+  cliente.println("<section class='grid'>");
+
+  cliente.println("<div class='card'><h2>Sistema</h2><table class='table'>");
+  cliente.print("<tr><td>Conexao em uso</td><td>");
+  cliente.print(nomeConexao(conexaoAtual));
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Uptime</td><td>");
+  cliente.print(formatarUptime());
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>microSD</td><td class='");
+  cliente.print(microSdOk ? "okText" : "errText");
+  cliente.print("'>");
+  cliente.print(microSdOk ? "Operacional" : "Indisponivel");
+  cliente.println("</td></tr>");
+  cliente.println("</table></div>");
+
+  cliente.println("<div class='card'><h2>Pacotes</h2><table class='table'>");
+  cliente.print("<tr><td>Pacotes validos</td><td>");
+  cliente.print(totalPacotesRecebidos);
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Erros detectados</td><td>");
+  cliente.print(totalErros);
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Ultima leitura</td><td>");
+  cliente.print(tempoDesdeUltimaLeitura());
+  cliente.println("</td></tr>");
+  cliente.println("</table></div>");
+
+  cliente.println("<div class='card'><h2>Rede</h2><table class='table'>");
+  cliente.print("<tr><td>Falhas MQTT</td><td>");
+  cliente.print(falhasMQTTConsecutivas);
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Fallback Wi-Fi</td><td>");
+  cliente.print(wifiReservaPorFalhaEthernet ? "Ativo" : "Inativo");
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Atualizacao</td><td>5 s</td></tr>");
+  cliente.println("</table></div>");
+
+  cliente.println("</section>");
+
+  cliente.println("<div class='section'><div><h2>Operacao</h2><span>Acoes locais do painel</span></div></div>");
+  cliente.println("<section class='card'>");
+  cliente.println("<div class='actions'>");
+  cliente.println("<a class='btn primary' href='/'>Atualizar painel</a>");
+  cliente.println("<a class='btn' href='/config'>Configuracoes</a>");
+  cliente.println("<a class='btn' href='/status'>Status JSON</a>");
+  cliente.println("</div>");
+  cliente.println("<div class='sub'>Interface local embarcada no ESP32. Nao depende de internet externa.</div>");
+  cliente.println("</section>");
+
+  cliente.println("<p class='footer'>Gateway Ambiental ESP32 | Ethernet W5500 | Wi-Fi reserva | MQTT | microSD</p>");
+  cliente.println("</main></body></html>");
+}
+
+void enviarPaginaConfig(Client& cliente) {
+  enviarCabecalhoHTML(cliente);
+
+  cliente.println("<!DOCTYPE html><html lang='pt-br'><head><meta charset='UTF-8'>");
+  cliente.println("<meta name='viewport' content='width=device-width, initial-scale=1.0'>");
+  cliente.println("<title>Configuracoes - Gateway Ambiental ESP32</title>");
+  enviarCSSDashboard(cliente);
+  cliente.println("</head><body><main class='wrap'>");
+
+  cliente.println("<header class='top'><div class='brand'><h1>Configuracoes do Gateway</h1><p>Base visual para configuracoes futuras do produto</p></div><div class='pill'><span class='dot warn'></span>EM DESENVOLVIMENTO</div></header>");
+
+  cliente.println("<section class='grid'>");
+  cliente.println("<div class='card'><h2>MQTT</h2><table class='table'>");
+  cliente.print("<tr><td>Broker atual</td><td>");
+  cliente.print(ipParaTexto(ipBroker));
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Porta</td><td>");
+  cliente.print(portaMQTT);
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Topico principal</td><td>");
+  cliente.print(topicoDados);
+  cliente.println("</td></tr></table></div>");
+
+  cliente.println("<div class='card'><h2>Wi-Fi reserva</h2><table class='table'>");
+  cliente.print("<tr><td>SSID configurado</td><td>");
+  cliente.print(ssidWiFi);
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Status</td><td>");
+  cliente.print(estadoWiFiTexto());
+  cliente.println("</td></tr>");
+  cliente.println("<tr><td>Modo</td><td>Reserva</td></tr></table></div>");
+
+  cliente.println("<div class='card'><h2>Planejado</h2><table class='table'>");
+  cliente.println("<tr><td>Editar broker MQTT</td><td>Futuro</td></tr>");
+  cliente.println("<tr><td>Alterar topicos</td><td>Futuro</td></tr>");
+  cliente.println("<tr><td>Intervalo de envio</td><td>Futuro</td></tr>");
+  cliente.println("<tr><td>Nome do dispositivo</td><td>Futuro</td></tr>");
+  cliente.println("</table></div>");
+  cliente.println("</section>");
+
+  cliente.println("<section class='card'><div class='actions'><a class='btn primary' href='/'>Voltar ao painel</a><a class='btn' href='/status'>Ver JSON</a></div><div class='sub'>Nesta versao, a pagina e apenas informativa. Em uma etapa futura, ela pode salvar configuracoes no microSD.</div></section>");
+  cliente.println("</main></body></html>");
+}
+
+void enviarStatusJSON(Client& cliente) {
+  enviarCabecalhoJSON(cliente);
+
+  cliente.print("{");
+  cliente.print("\"sistema\":\"");
+  cliente.print(sistemaOnline() ? "online" : "offline");
+  cliente.print("\",");
+
+  cliente.print("\"conexao_atual\":\"");
+  cliente.print(nomeConexao(conexaoAtual));
+  cliente.print("\",");
+
+  cliente.print("\"ethernet\":\"");
+  cliente.print(estadoEthernetTexto());
+  cliente.print("\",");
+
+  cliente.print("\"wifi\":\"");
+  cliente.print(estadoWiFiTexto());
+  cliente.print("\",");
+
+  cliente.print("\"mqtt\":\"");
+  cliente.print(estadoMQTTTexto());
+  cliente.print("\",");
+
+  cliente.print("\"ip_ethernet\":\"");
+  cliente.print(ipParaTexto(Ethernet.localIP()));
+  cliente.print("\",");
+
+  cliente.print("\"ip_wifi\":\"");
+  cliente.print(wifiOkWeb() ? ipParaTexto(WiFi.localIP()) : "indisponivel");
+  cliente.print("\",");
+
+  cliente.print("\"uptime\":\"");
+  cliente.print(formatarUptime());
+  cliente.print("\",");
+
+  cliente.print("\"pacotes_validos\":");
+  cliente.print(totalPacotesRecebidos);
+  cliente.print(",");
+
+  cliente.print("\"erros\":");
+  cliente.print(totalErros);
+  cliente.print(",");
+
+  cliente.print("\"microsd\":\"");
+  cliente.print(microSdOk ? "operacional" : "indisponivel");
+  cliente.print("\",");
+
+  cliente.print("\"temperatura\":");
+  if (existeLeituraValida) cliente.print(dados.temperatura, 1); else cliente.print("null");
+  cliente.print(",");
+
+  cliente.print("\"umidade_ar\":");
+  if (existeLeituraValida) cliente.print(dados.umidadeAr, 1); else cliente.print("null");
+  cliente.print(",");
+
+  cliente.print("\"umidade_solo\":");
+  if (existeLeituraValida) cliente.print(dados.umidadeSolo); else cliente.print("null");
+  cliente.print(",");
+
+  cliente.print("\"luminosidade\":");
+  if (existeLeituraValida) cliente.print(dados.luminosidade); else cliente.print("null");
+  cliente.print(",");
+
+  cliente.print("\"chuva\":");
+  if (existeLeituraValida) cliente.print(dados.chuva); else cliente.print("null");
+
+  cliente.print("}");
+}
+
+void atenderClienteWeb(Client& cliente) {
+  String requisicao = "";
+  unsigned long inicio = millis();
+
+  while (cliente.connected() && millis() - inicio < 800) {
+    while (cliente.available()) {
+      char c = cliente.read();
+      requisicao += c;
+
+      if (requisicao.endsWith("\r\n\r\n")) {
+        break;
+      }
+    }
+
+    if (requisicao.endsWith("\r\n\r\n")) {
+      break;
+    }
+  }
+
+  if (requisicao.indexOf("GET /config") >= 0) {
+    enviarPaginaConfig(cliente);
+  } else if (requisicao.indexOf("GET /status") >= 0) {
+    enviarStatusJSON(cliente);
+  } else {
+    enviarPaginaPrincipal(cliente);
+  }
+
+  delay(1);
+  cliente.stop();
+}
+
+void iniciarPaginaWeb() {
+  servidorWebEthernet.begin();
+  servidorWebWiFi.begin();
+
+  Serial.println();
+  Serial.println("====================================");
+  Serial.println("SERVIDOR WEB INICIADO");
+  Serial.println("====================================");
+
+  Serial.print("Pagina web via Ethernet: http://");
+  Serial.println(ipParaTexto(Ethernet.localIP()));
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("Pagina web via Wi-Fi: http://");
+    Serial.println(ipParaTexto(WiFi.localIP()));
+  }
+
+  Serial.println("Rotas: /  |  /config  |  /status");
+}
+
+void executarPaginaWeb() {
+  if (ethernetComIP) {
+    prepararSPIParaEthernet();
+    EthernetClient clienteWebEthernet = servidorWebEthernet.available();
+
+    if (clienteWebEthernet) {
+      atenderClienteWeb(clienteWebEthernet);
+    }
+  }
+
+  WiFiClient clienteWebWiFi = servidorWebWiFi.available();
+
+  if (clienteWebWiFi) {
+    atenderClienteWeb(clienteWebWiFi);
   }
 }
 
@@ -877,15 +1391,20 @@ void processarLinhaUART(const char* linha) {
 
   if (quantidadeLida != 5) {
     Serial.println("Pacote UART invalido.");
+    totalErros++;
     return;
   }
 
   if (!dadosValidos(novaLeitura)) {
     Serial.println("Pacote rejeitado: valores fora do intervalo.");
+    totalErros++;
     return;
   }
 
   dados = novaLeitura;
+  existeLeituraValida = true;
+  totalPacotesRecebidos++;
+  ultimaLeituraValidaMs = millis();
 
   imprimirDados(dados);
 
@@ -937,6 +1456,7 @@ void receberUART() {
       indiceLinha++;
     } else {
       indiceLinha = 0;
+      totalErros++;
       Serial.println("Erro: linha UART muito grande.");
     }
   }
@@ -991,6 +1511,8 @@ void setup() {
 
   atualizarConexao();
   conectarMQTT();
+
+  iniciarPaginaWeb();
 }
 
 // ==================================================
@@ -998,6 +1520,8 @@ void setup() {
 // ==================================================
 
 void loop() {
+  executarPaginaWeb();
+
   if (conexaoAtual == CONEXAO_ETHERNET) {
     prepararSPIParaEthernet();
     Ethernet.maintain();
