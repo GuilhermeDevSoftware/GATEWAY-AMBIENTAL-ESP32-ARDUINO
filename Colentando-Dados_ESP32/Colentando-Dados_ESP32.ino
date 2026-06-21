@@ -1,17 +1,22 @@
 #include <SPI.h>
 #include <Ethernet.h>
 #include <PubSubClient.h>
+#include <SD.h>
 
 // ==================================================
-// CONFIGURAÇÃO DO W5500
+// CONFIGURAÇÃO DO SPI / W5500 / microSD
 // ==================================================
 
 #define PINO_W5500_CS   5
 #define PINO_W5500_RST  26
+#define PINO_SD_CS      4
 
 #define PINO_SPI_SCK    18
 #define PINO_SPI_MISO   19
 #define PINO_SPI_MOSI   23
+
+bool microSdOk = false;
+const char* ARQUIVO_DADOS = "/dados_gateway.csv";
 
 // Endereço MAC local do W5500.
 // Pode ser qualquer endereço válido que não esteja sendo usado na rede.
@@ -85,6 +90,79 @@ void reiniciarW5500() {
 }
 
 // ==================================================
+// INICIALIZAÇÃO DO microSD
+// ==================================================
+
+void iniciarMicroSD() {
+  Serial.println();
+  Serial.println("====================================");
+  Serial.println("INICIANDO microSD");
+  Serial.println("====================================");
+
+  // Garante que o W5500 não esteja selecionado no SPI.
+  digitalWrite(PINO_W5500_CS, HIGH);
+  digitalWrite(PINO_SD_CS, HIGH);
+
+  if (!SD.begin(PINO_SD_CS, SPI)) {
+    Serial.println("Falha ao inicializar o microSD.");
+    microSdOk = false;
+    return;
+  }
+
+  microSdOk = true;
+  Serial.println("microSD inicializado com sucesso.");
+
+  if (!SD.exists(ARQUIVO_DADOS)) {
+    File arquivo = SD.open(ARQUIVO_DADOS, FILE_WRITE);
+
+    if (arquivo) {
+      arquivo.println("timestamp_ms,temperatura,umidade_ar,umidade_solo,luminosidade,chuva");
+      arquivo.close();
+      Serial.println("Arquivo CSV criado com cabecalho.");
+    } else {
+      Serial.println("Erro ao criar arquivo CSV.");
+    }
+  }
+}
+
+// ==================================================
+// GRAVAÇÃO NO microSD
+// ==================================================
+
+void salvarNoMicroSD(const DadosAmbientais& leitura) {
+  if (!microSdOk) {
+    Serial.println("microSD indisponivel. Leitura nao salva.");
+    return;
+  }
+
+  // Garante que o W5500 não esteja selecionado durante a escrita no SD.
+  digitalWrite(PINO_W5500_CS, HIGH);
+
+  File arquivo = SD.open(ARQUIVO_DADOS, FILE_APPEND);
+
+  if (!arquivo) {
+    Serial.println("Erro ao abrir arquivo CSV no microSD.");
+    return;
+  }
+
+  arquivo.print(millis());
+  arquivo.print(",");
+  arquivo.print(leitura.temperatura, 2);
+  arquivo.print(",");
+  arquivo.print(leitura.umidadeAr, 2);
+  arquivo.print(",");
+  arquivo.print(leitura.umidadeSolo);
+  arquivo.print(",");
+  arquivo.print(leitura.luminosidade);
+  arquivo.print(",");
+  arquivo.println(leitura.chuva);
+
+  arquivo.close();
+
+  Serial.println("Leitura salva no microSD.");
+}
+
+// ==================================================
 // INICIALIZAÇÃO DA ETHERNET
 // ==================================================
 
@@ -94,12 +172,9 @@ void iniciarEthernet() {
   Serial.println("INICIANDO ETHERNET W5500");
   Serial.println("====================================");
 
-  SPI.begin(
-    PINO_SPI_SCK,
-    PINO_SPI_MISO,
-    PINO_SPI_MOSI,
-    PINO_W5500_CS
-  );
+  // Garante que o microSD não esteja selecionado no SPI.
+  digitalWrite(PINO_SD_CS, HIGH);
+  digitalWrite(PINO_W5500_CS, HIGH);
 
   Ethernet.init(PINO_W5500_CS);
 
@@ -392,7 +467,11 @@ void processarLinhaUART(const char* linha) {
   Serial.print("Chuva: ");
   Serial.println(dados.chuva);
 
+  // Primeiro tenta publicar no MQTT.
   publicarDadosMQTT(dados);
+
+  // Independente do MQTT funcionar ou não, salva no microSD.
+  salvarNoMicroSD(dados);
 }
 
 // ==================================================
@@ -436,13 +515,25 @@ void receberUART() {
 
 void setup() {
   Serial.begin(115200);
-
   delay(1000);
+
+  pinMode(PINO_W5500_CS, OUTPUT);
+  pinMode(PINO_SD_CS, OUTPUT);
+
+  digitalWrite(PINO_W5500_CS, HIGH);
+  digitalWrite(PINO_SD_CS, HIGH);
+
+  // SPI compartilhado entre W5500 e microSD.
+  SPI.begin(
+    PINO_SPI_SCK,
+    PINO_SPI_MISO,
+    PINO_SPI_MOSI
+  );
 
   Serial.println();
   Serial.println("====================================");
   Serial.println("GATEWAY AMBIENTAL ESP32");
-  Serial.println("UART + W5500 + MQTT");
+  Serial.println("UART + W5500 + MQTT + microSD");
   Serial.println("====================================");
 
   SerialSensores.begin(
@@ -452,6 +543,7 @@ void setup() {
     PINO_UART_TX
   );
 
+  iniciarMicroSD();
   iniciarEthernet();
 
   clienteMQTT.setServer(
