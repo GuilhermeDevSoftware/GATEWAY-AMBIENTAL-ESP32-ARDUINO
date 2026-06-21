@@ -4,22 +4,39 @@
 #include <SD.h>
 
 // ==================================================
-// CONFIGURAÇÃO DO SPI / W5500 / microSD
+// CONFIGURAÇÃO DOS PINOS
 // ==================================================
 
+// W5500
 #define PINO_W5500_CS   5
 #define PINO_W5500_RST  26
+
+// microSD
 #define PINO_SD_CS      4
 
+// SPI compartilhado entre W5500 e microSD
 #define PINO_SPI_SCK    18
 #define PINO_SPI_MISO   19
 #define PINO_SPI_MOSI   23
 
-bool microSdOk = false;
-const char* ARQUIVO_DADOS = "/dados_gateway.csv";
+// UART ESP32 <-> Arduino
+#define PINO_UART_RX    16
+#define PINO_UART_TX    17
 
-// Endereço MAC local do W5500.
-// Pode ser qualquer endereço válido que não esteja sendo usado na rede.
+// ==================================================
+// CONFIGURAÇÃO DO microSD
+// ==================================================
+
+bool microSdOk = false;
+
+const char* ARQUIVO_DADOS      = "/dados_gateway.csv";
+const char* ARQUIVO_PENDENTES  = "/pendentes_mqtt.txt";
+const char* ARQUIVO_TEMP       = "/pendentes_tmp.txt";
+
+// ==================================================
+// CONFIGURAÇÃO DA ETHERNET
+// ==================================================
+
 byte mac[] = {
   0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED
 };
@@ -28,9 +45,7 @@ byte mac[] = {
 // CONFIGURAÇÃO DO MQTT
 // ==================================================
 
-// Atenção: os números devem ser separados por vírgulas.
 IPAddress ipBroker(192, 168, 100, 17);
-
 const uint16_t portaMQTT = 1883;
 
 const char* topicoDados        = "gateway/ambiental/dados";
@@ -48,10 +63,20 @@ PubSubClient clienteMQTT(clienteEthernet);
 // CONFIGURAÇÃO DA UART
 // ==================================================
 
-#define PINO_UART_RX 16
-#define PINO_UART_TX 17
-
 HardwareSerial SerialSensores(2);
+
+char linhaUART[100];
+uint8_t indiceLinha = 0;
+
+// ==================================================
+// CONTROLES DE TEMPO
+// ==================================================
+
+unsigned long ultimaTentativaMQTT = 0;
+const unsigned long intervaloReconexaoMQTT = 5000;
+
+unsigned long ultimoReenvioPendentes = 0;
+const unsigned long intervaloReenvioPendentes = 10000;
 
 // ==================================================
 // ESTRUTURA DOS DADOS
@@ -67,13 +92,17 @@ struct DadosAmbientais {
 
 DadosAmbientais dados;
 
-// Buffer que receberá uma linha da UART.
-char linhaUART[100];
-uint8_t indiceLinha = 0;
+// ==================================================
+// CONTROLE DO SPI COMPARTILHADO
+// ==================================================
 
-// Controle da tentativa de reconexão MQTT.
-unsigned long ultimaTentativaMQTT = 0;
-const unsigned long intervaloReconexaoMQTT = 5000;
+void prepararSPIParaSD() {
+  digitalWrite(PINO_W5500_CS, HIGH);
+}
+
+void prepararSPIParaEthernet() {
+  digitalWrite(PINO_SD_CS, HIGH);
+}
 
 // ==================================================
 // RESET DO W5500
@@ -99,9 +128,7 @@ void iniciarMicroSD() {
   Serial.println("INICIANDO microSD");
   Serial.println("====================================");
 
-  // Garante que o W5500 não esteja selecionado no SPI.
-  digitalWrite(PINO_W5500_CS, HIGH);
-  digitalWrite(PINO_SD_CS, HIGH);
+  prepararSPIParaSD();
 
   if (!SD.begin(PINO_SD_CS, SPI)) {
     Serial.println("Falha ao inicializar o microSD.");
@@ -118,6 +145,7 @@ void iniciarMicroSD() {
     if (arquivo) {
       arquivo.println("timestamp_ms,temperatura,umidade_ar,umidade_solo,luminosidade,chuva");
       arquivo.close();
+
       Serial.println("Arquivo CSV criado com cabecalho.");
     } else {
       Serial.println("Erro ao criar arquivo CSV.");
@@ -126,7 +154,7 @@ void iniciarMicroSD() {
 }
 
 // ==================================================
-// GRAVAÇÃO NO microSD
+// SALVAR HISTÓRICO NO microSD
 // ==================================================
 
 void salvarNoMicroSD(const DadosAmbientais& leitura) {
@@ -135,8 +163,7 @@ void salvarNoMicroSD(const DadosAmbientais& leitura) {
     return;
   }
 
-  // Garante que o W5500 não esteja selecionado durante a escrita no SD.
-  digitalWrite(PINO_W5500_CS, HIGH);
+  prepararSPIParaSD();
 
   File arquivo = SD.open(ARQUIVO_DADOS, FILE_APPEND);
 
@@ -163,6 +190,31 @@ void salvarNoMicroSD(const DadosAmbientais& leitura) {
 }
 
 // ==================================================
+// SALVAR PACOTE PENDENTE NO microSD
+// ==================================================
+
+void salvarPendenteMQTT(const char* json) {
+  if (!microSdOk) {
+    Serial.println("microSD indisponivel. Pendente nao salvo.");
+    return;
+  }
+
+  prepararSPIParaSD();
+
+  File arquivo = SD.open(ARQUIVO_PENDENTES, FILE_APPEND);
+
+  if (!arquivo) {
+    Serial.println("Erro ao abrir arquivo de pendentes.");
+    return;
+  }
+
+  arquivo.println(json);
+  arquivo.close();
+
+  Serial.println("Pacote salvo como pendente no microSD.");
+}
+
+// ==================================================
 // INICIALIZAÇÃO DA ETHERNET
 // ==================================================
 
@@ -172,9 +224,7 @@ void iniciarEthernet() {
   Serial.println("INICIANDO ETHERNET W5500");
   Serial.println("====================================");
 
-  // Garante que o microSD não esteja selecionado no SPI.
-  digitalWrite(PINO_SD_CS, HIGH);
-  digitalWrite(PINO_W5500_CS, HIGH);
+  prepararSPIParaEthernet();
 
   Ethernet.init(PINO_W5500_CS);
 
@@ -184,7 +234,7 @@ void iniciarEthernet() {
 
   if (Ethernet.begin(mac) == 0) {
     Serial.println("Falha ao obter IP por DHCP.");
-    Serial.println("Verifique o cabo e o roteador.");
+    Serial.println("Verifique o cabo de rede e o roteador.");
     return;
   }
 
@@ -220,13 +270,14 @@ void conectarMQTT() {
 
   ultimaTentativaMQTT = tempoAtual;
 
+  prepararSPIParaEthernet();
+
   Serial.println();
   Serial.print("Conectando ao Mosquitto em ");
   Serial.print(ipBroker);
   Serial.print(":");
   Serial.println(portaMQTT);
 
-  // Cria um identificador único utilizando o chip do ESP32.
   uint64_t chipID = ESP.getEfuseMac();
 
   char idCliente[40];
@@ -238,12 +289,6 @@ void conectarMQTT() {
     (uint16_t)(chipID >> 32)
   );
 
-  /*
-    Configura também uma última vontade MQTT.
-
-    Se o ESP32 perder a conexão abruptamente, o broker
-    publicará "offline" no tópico de status.
-  */
   bool conectado = clienteMQTT.connect(
     idCliente,
     topicoStatus,
@@ -267,32 +312,27 @@ void conectarMQTT() {
 }
 
 // ==================================================
-// VALIDAÇÃO DOS SENSORES
+// VALIDAÇÃO DOS DADOS
 // ==================================================
 
 bool dadosValidos(const DadosAmbientais& leitura) {
-  if (leitura.temperatura < -40.0 ||
-      leitura.temperatura > 80.0) {
+  if (leitura.temperatura < -40.0 || leitura.temperatura > 80.0) {
     return false;
   }
 
-  if (leitura.umidadeAr < 0.0 ||
-      leitura.umidadeAr > 100.0) {
+  if (leitura.umidadeAr < 0.0 || leitura.umidadeAr > 100.0) {
     return false;
   }
 
-  if (leitura.umidadeSolo < 0 ||
-      leitura.umidadeSolo > 1023) {
+  if (leitura.umidadeSolo < 0 || leitura.umidadeSolo > 1023) {
     return false;
   }
 
-  if (leitura.luminosidade < 0 ||
-      leitura.luminosidade > 1023) {
+  if (leitura.luminosidade < 0 || leitura.luminosidade > 1023) {
     return false;
   }
 
-  if (leitura.chuva < 0 ||
-      leitura.chuva > 1023) {
+  if (leitura.chuva < 0 || leitura.chuva > 1023) {
     return false;
   }
 
@@ -300,93 +340,13 @@ bool dadosValidos(const DadosAmbientais& leitura) {
 }
 
 // ==================================================
-// PUBLICAÇÃO MQTT
+// MONTAGEM DO JSON
 // ==================================================
 
-void publicarDadosMQTT(const DadosAmbientais& leitura) {
-  if (!clienteMQTT.connected()) {
-    Serial.println("MQTT desconectado. Pacote nao publicado.");
-    return;
-  }
-
-  char valor[20];
-
-  // Temperatura
-  snprintf(
-    valor,
-    sizeof(valor),
-    "%.1f",
-    leitura.temperatura
-  );
-
-  clienteMQTT.publish(
-    topicoTemperatura,
-    valor,
-    true
-  );
-
-  // Umidade do ar
-  snprintf(
-    valor,
-    sizeof(valor),
-    "%.1f",
-    leitura.umidadeAr
-  );
-
-  clienteMQTT.publish(
-    topicoUmidadeAr,
-    valor,
-    true
-  );
-
-  // Umidade do solo
-  snprintf(
-    valor,
-    sizeof(valor),
-    "%d",
-    leitura.umidadeSolo
-  );
-
-  clienteMQTT.publish(
-    topicoUmidadeSolo,
-    valor,
-    true
-  );
-
-  // Luminosidade
-  snprintf(
-    valor,
-    sizeof(valor),
-    "%d",
-    leitura.luminosidade
-  );
-
-  clienteMQTT.publish(
-    topicoLuminosidade,
-    valor,
-    true
-  );
-
-  // Chuva
-  snprintf(
-    valor,
-    sizeof(valor),
-    "%d",
-    leitura.chuva
-  );
-
-  clienteMQTT.publish(
-    topicoChuva,
-    valor,
-    true
-  );
-
-  // Publicação de todos os sensores em JSON.
-  char json[200];
-
+void montarJson(const DadosAmbientais& leitura, char* json, size_t tamanhoJson) {
   snprintf(
     json,
-    sizeof(json),
+    tamanhoJson,
     "{\"temperatura\":%.1f,"
     "\"umidade_ar\":%.1f,"
     "\"umidade_solo\":%d,"
@@ -398,23 +358,174 @@ void publicarDadosMQTT(const DadosAmbientais& leitura) {
     leitura.luminosidade,
     leitura.chuva
   );
-
-  bool publicado = clienteMQTT.publish(
-    topicoDados,
-    json,
-    true
-  );
-
-  if (publicado) {
-    Serial.println("Dados publicados no MQTT:");
-    Serial.println(json);
-  } else {
-    Serial.println("Erro ao publicar pacote MQTT.");
-  }
 }
 
 // ==================================================
-// PROCESSAMENTO DA LINHA RECEBIDA
+// PUBLICAÇÃO MQTT
+// ==================================================
+
+bool publicarDadosMQTT(const DadosAmbientais& leitura, const char* json) {
+  if (!clienteMQTT.connected()) {
+    Serial.println("MQTT desconectado. Pacote nao publicado.");
+    return false;
+  }
+
+  prepararSPIParaEthernet();
+
+  bool sucesso = true;
+
+  char valor[20];
+
+  snprintf(valor, sizeof(valor), "%.1f", leitura.temperatura);
+  sucesso = sucesso && clienteMQTT.publish(topicoTemperatura, valor, true);
+
+  snprintf(valor, sizeof(valor), "%.1f", leitura.umidadeAr);
+  sucesso = sucesso && clienteMQTT.publish(topicoUmidadeAr, valor, true);
+
+  snprintf(valor, sizeof(valor), "%d", leitura.umidadeSolo);
+  sucesso = sucesso && clienteMQTT.publish(topicoUmidadeSolo, valor, true);
+
+  snprintf(valor, sizeof(valor), "%d", leitura.luminosidade);
+  sucesso = sucesso && clienteMQTT.publish(topicoLuminosidade, valor, true);
+
+  snprintf(valor, sizeof(valor), "%d", leitura.chuva);
+  sucesso = sucesso && clienteMQTT.publish(topicoChuva, valor, true);
+
+  sucesso = sucesso && clienteMQTT.publish(topicoDados, json, true);
+
+  if (sucesso) {
+    Serial.println("Dados publicados no MQTT:");
+    Serial.println(json);
+  } else {
+    Serial.println("Erro ao publicar um ou mais topicos MQTT.");
+  }
+
+  return sucesso;
+}
+
+// ==================================================
+// REENVIO DOS PACOTES PENDENTES
+// ==================================================
+
+void reenviarPendentesMQTT() {
+  if (!microSdOk) {
+    return;
+  }
+
+  if (!clienteMQTT.connected()) {
+    return;
+  }
+
+  prepararSPIParaSD();
+
+  if (!SD.exists(ARQUIVO_PENDENTES)) {
+    return;
+  }
+
+  File pendentes = SD.open(ARQUIVO_PENDENTES, FILE_READ);
+
+  if (!pendentes) {
+    Serial.println("Erro ao abrir arquivo de pendentes para leitura.");
+    return;
+  }
+
+  File temporario = SD.open(ARQUIVO_TEMP, FILE_WRITE);
+
+  if (!temporario) {
+    Serial.println("Erro ao criar arquivo temporario de pendentes.");
+    pendentes.close();
+    return;
+  }
+
+  Serial.println();
+  Serial.println("====================================");
+  Serial.println("REENVIANDO PACOTES PENDENTES");
+  Serial.println("====================================");
+
+  int reenviados = 0;
+  int mantidos = 0;
+
+  while (pendentes.available()) {
+    String linha = pendentes.readStringUntil('\n');
+    linha.trim();
+
+    if (linha.length() == 0) {
+      continue;
+    }
+
+    prepararSPIParaEthernet();
+
+    bool enviado = clienteMQTT.publish(
+      topicoDados,
+      linha.c_str(),
+      true
+    );
+
+    if (enviado) {
+      reenviados++;
+
+      Serial.println("Pendente reenviado:");
+      Serial.println(linha);
+
+      delay(100);
+    } else {
+      prepararSPIParaSD();
+
+      temporario.println(linha);
+      mantidos++;
+
+      Serial.println("Falha ao reenviar pendente. Mantendo no microSD.");
+    }
+  }
+
+  pendentes.close();
+  temporario.close();
+
+  prepararSPIParaSD();
+
+  SD.remove(ARQUIVO_PENDENTES);
+
+  if (mantidos > 0) {
+    SD.rename(ARQUIVO_TEMP, ARQUIVO_PENDENTES);
+  } else {
+    SD.remove(ARQUIVO_TEMP);
+  }
+
+  Serial.print("Reenvio finalizado. Reenviados: ");
+  Serial.print(reenviados);
+  Serial.print(" | Ainda pendentes: ");
+  Serial.println(mantidos);
+}
+
+// ==================================================
+// IMPRESSÃO DOS DADOS NO SERIAL
+// ==================================================
+
+void imprimirDados(const DadosAmbientais& leitura) {
+  Serial.println("====================================");
+  Serial.println("PACOTE AMBIENTAL VALIDO");
+  Serial.println("====================================");
+
+  Serial.print("Temperatura: ");
+  Serial.print(leitura.temperatura);
+  Serial.println(" C");
+
+  Serial.print("Umidade do ar: ");
+  Serial.print(leitura.umidadeAr);
+  Serial.println(" %");
+
+  Serial.print("Umidade do solo: ");
+  Serial.println(leitura.umidadeSolo);
+
+  Serial.print("Luminosidade: ");
+  Serial.println(leitura.luminosidade);
+
+  Serial.print("Chuva: ");
+  Serial.println(leitura.chuva);
+}
+
+// ==================================================
+// PROCESSAMENTO DA LINHA RECEBIDA VIA UART
 // ==================================================
 
 void processarLinhaUART(const char* linha) {
@@ -446,31 +557,17 @@ void processarLinhaUART(const char* linha) {
 
   dados = novaLeitura;
 
-  Serial.println("====================================");
-  Serial.println("PACOTE AMBIENTAL VALIDO");
-  Serial.println("====================================");
+  imprimirDados(dados);
 
-  Serial.print("Temperatura: ");
-  Serial.print(dados.temperatura);
-  Serial.println(" C");
+  char json[200];
+  montarJson(dados, json, sizeof(json));
 
-  Serial.print("Umidade do ar: ");
-  Serial.print(dados.umidadeAr);
-  Serial.println(" %");
+  bool publicado = publicarDadosMQTT(dados, json);
 
-  Serial.print("Umidade do solo: ");
-  Serial.println(dados.umidadeSolo);
+  if (!publicado) {
+    salvarPendenteMQTT(json);
+  }
 
-  Serial.print("Luminosidade: ");
-  Serial.println(dados.luminosidade);
-
-  Serial.print("Chuva: ");
-  Serial.println(dados.chuva);
-
-  // Primeiro tenta publicar no MQTT.
-  publicarDadosMQTT(dados);
-
-  // Independente do MQTT funcionar ou não, salva no microSD.
   salvarNoMicroSD(dados);
 }
 
@@ -502,7 +599,6 @@ void receberUART() {
       linhaUART[indiceLinha] = caractere;
       indiceLinha++;
     } else {
-      // Evita ultrapassar o tamanho do buffer.
       indiceLinha = 0;
       Serial.println("Erro: linha UART muito grande.");
     }
@@ -523,7 +619,6 @@ void setup() {
   digitalWrite(PINO_W5500_CS, HIGH);
   digitalWrite(PINO_SD_CS, HIGH);
 
-  // SPI compartilhado entre W5500 e microSD.
   SPI.begin(
     PINO_SPI_SCK,
     PINO_SPI_MISO,
@@ -544,6 +639,7 @@ void setup() {
   );
 
   iniciarMicroSD();
+
   iniciarEthernet();
 
   clienteMQTT.setServer(
@@ -559,15 +655,16 @@ void setup() {
 // ==================================================
 
 void loop() {
-  // Mantém a concessão DHCP.
   Ethernet.maintain();
 
-  // Tenta reconectar caso o MQTT seja desconectado.
   conectarMQTT();
 
-  // Mantém a comunicação MQTT funcionando.
   clienteMQTT.loop();
 
-  // Recebe e processa os sensores enviados pelo Arduino.
   receberUART();
+
+  if (millis() - ultimoReenvioPendentes >= intervaloReenvioPendentes) {
+    ultimoReenvioPendentes = millis();
+    reenviarPendentesMQTT();
+  }
 }
