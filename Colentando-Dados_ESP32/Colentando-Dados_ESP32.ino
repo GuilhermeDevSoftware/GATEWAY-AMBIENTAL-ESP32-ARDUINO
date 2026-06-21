@@ -1,10 +1,11 @@
 #include <SPI.h>
 #include <Ethernet.h>
+#include <WiFi.h>
 #include <PubSubClient.h>
 #include <SD.h>
 
 // ==================================================
-// CONFIGURAÇÃO DOS PINOS
+// CONFIGURACAO DOS PINOS
 // ==================================================
 
 // W5500
@@ -24,7 +25,7 @@
 #define PINO_UART_TX    17
 
 // ==================================================
-// CONFIGURAÇÃO DO microSD
+// CONFIGURACAO DO microSD
 // ==================================================
 
 bool microSdOk = false;
@@ -34,15 +35,28 @@ const char* ARQUIVO_PENDENTES  = "/pendentes_mqtt.txt";
 const char* ARQUIVO_TEMP       = "/pendentes_tmp.txt";
 
 // ==================================================
-// CONFIGURAÇÃO DA ETHERNET
+// CONFIGURACAO DA ETHERNET
 // ==================================================
 
 byte mac[] = {
-  0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED
+  0x02, 0x12, 0x34, 0x56, 0x78, 0x90
 };
 
+bool ethernetComIP = false;
+
 // ==================================================
-// CONFIGURAÇÃO DO MQTT
+// CONFIGURACAO DO WI-FI RESERVA
+// ==================================================
+
+// IMPORTANTE:
+// O Wi-Fi precisa estar na mesma rede do computador onde roda o Mosquitto,
+// ou precisa conseguir acessar o IP do broker MQTT configurado abaixo.
+
+const char* ssidWiFi  = "coloca o nome do wifi";
+const char* senhaWiFi = "coloca sua senha";
+
+// ==================================================
+// CONFIGURACAO DO MQTT
 // ==================================================
 
 IPAddress ipBroker(192, 168, 100, 17);
@@ -57,10 +71,30 @@ const char* topicoChuva        = "gateway/ambiental/chuva";
 const char* topicoStatus       = "gateway/ambiental/status";
 
 EthernetClient clienteEthernet;
+WiFiClient clienteWiFi;
 PubSubClient clienteMQTT(clienteEthernet);
 
 // ==================================================
-// CONFIGURAÇÃO DA UART
+// PRIORIDADE DE CONEXAO
+// ==================================================
+
+enum TipoConexao {
+  CONEXAO_ETHERNET,
+  CONEXAO_WIFI,
+  CONEXAO_OFFLINE
+};
+
+TipoConexao conexaoAtual = CONEXAO_OFFLINE;
+
+uint8_t falhasMQTTConsecutivas = 0;
+const uint8_t limiteFalhasMQTTEthernet = 3;
+
+bool wifiReservaPorFalhaEthernet = false;
+unsigned long inicioFallbackWiFi = 0;
+const unsigned long tempoRetornoParaEthernet = 30000;
+
+// ==================================================
+// CONFIGURACAO DA UART
 // ==================================================
 
 HardwareSerial SerialSensores(2);
@@ -77,6 +111,15 @@ const unsigned long intervaloReconexaoMQTT = 5000;
 
 unsigned long ultimoReenvioPendentes = 0;
 const unsigned long intervaloReenvioPendentes = 10000;
+
+unsigned long ultimoCheckConexao = 0;
+const unsigned long intervaloCheckConexao = 5000;
+
+unsigned long ultimaTentativaWiFi = 0;
+const unsigned long intervaloTentativaWiFi = 15000;
+
+unsigned long ultimaTentativaEthernetDHCP = 0;
+const unsigned long intervaloTentativaEthernetDHCP = 10000;
 
 // ==================================================
 // ESTRUTURA DOS DADOS
@@ -104,6 +147,34 @@ void prepararSPIParaEthernet() {
   digitalWrite(PINO_SD_CS, HIGH);
 }
 
+void prepararRedeParaMQTT() {
+  if (conexaoAtual == CONEXAO_ETHERNET) {
+    prepararSPIParaEthernet();
+  } else {
+    digitalWrite(PINO_SD_CS, HIGH);
+    digitalWrite(PINO_W5500_CS, HIGH);
+  }
+}
+
+// ==================================================
+// FUNCOES AUXILIARES
+// ==================================================
+
+bool ipValido(IPAddress ip) {
+  return !(ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0);
+}
+
+const char* nomeConexao(TipoConexao conexao) {
+  switch (conexao) {
+    case CONEXAO_ETHERNET:
+      return "Ethernet";
+    case CONEXAO_WIFI:
+      return "Wi-Fi";
+    default:
+      return "Offline";
+  }
+}
+
 // ==================================================
 // RESET DO W5500
 // ==================================================
@@ -119,7 +190,7 @@ void reiniciarW5500() {
 }
 
 // ==================================================
-// INICIALIZAÇÃO DO microSD
+// INICIALIZACAO DO microSD
 // ==================================================
 
 void iniciarMicroSD() {
@@ -154,7 +225,7 @@ void iniciarMicroSD() {
 }
 
 // ==================================================
-// SALVAR HISTÓRICO NO microSD
+// SALVAR HISTORICO NO microSD
 // ==================================================
 
 void salvarNoMicroSD(const DadosAmbientais& leitura) {
@@ -215,8 +286,58 @@ void salvarPendenteMQTT(const char* json) {
 }
 
 // ==================================================
-// INICIALIZAÇÃO DA ETHERNET
+// INICIALIZACAO DA ETHERNET
 // ==================================================
+
+// Esta funcao usa a mesma logica do teste isolado que funcionou:
+// reset fisico do W5500 -> SPI.begin -> Ethernet.init -> Ethernet.begin(mac)
+// Evitamos bloquear o projeto com Ethernet.hardwareStatus(), pois no seu modulo
+// esse teste retornou falso antes da inicializacao DHCP funcionar corretamente.
+
+bool tentarObterIPEthernet() {
+  prepararSPIParaEthernet();
+
+  Ethernet.init(PINO_W5500_CS);
+
+  Serial.println("Procurando endereco IP via DHCP...");
+
+  if (Ethernet.begin(mac) == 0) {
+    ethernetComIP = false;
+    Serial.println("Falha ao obter IP via DHCP.");
+    return false;
+  }
+
+  delay(1000);
+
+  ethernetComIP = true;
+
+  Serial.println("Ethernet conectada!");
+
+  Serial.print("IP Ethernet: ");
+  Serial.println(Ethernet.localIP());
+
+  Serial.print("Mascara de rede: ");
+  Serial.println(Ethernet.subnetMask());
+
+  Serial.print("Gateway: ");
+  Serial.println(Ethernet.gatewayIP());
+
+  Serial.print("Servidor DNS: ");
+  Serial.println(Ethernet.dnsServerIP());
+
+  Serial.print("IP do broker MQTT: ");
+  Serial.println(ipBroker);
+
+  if (Ethernet.linkStatus() == LinkON) {
+    Serial.println("Status do cabo Ethernet: CONECTADO");
+  } else if (Ethernet.linkStatus() == LinkOFF) {
+    Serial.println("Status do cabo Ethernet: DESCONECTADO");
+  } else {
+    Serial.println("Status do cabo Ethernet: DESCONHECIDO");
+  }
+
+  return true;
+}
 
 void iniciarEthernet() {
   Serial.println();
@@ -226,61 +347,220 @@ void iniciarEthernet() {
 
   prepararSPIParaEthernet();
 
-  Ethernet.init(PINO_W5500_CS);
+  // Garante que o microSD nao esteja selecionado durante a inicializacao da Ethernet.
+  digitalWrite(PINO_SD_CS, HIGH);
+  digitalWrite(PINO_W5500_CS, HIGH);
 
   reiniciarW5500();
 
-  Serial.println("Obtendo endereco IP por DHCP...");
+  // Reaplica a configuracao SPI exatamente como no teste isolado aprovado.
+  SPI.begin(
+    PINO_SPI_SCK,
+    PINO_SPI_MISO,
+    PINO_SPI_MOSI,
+    PINO_W5500_CS
+  );
 
-  if (Ethernet.begin(mac) == 0) {
-    Serial.println("Falha ao obter IP por DHCP.");
-    Serial.println("Verifique o cabo de rede e o roteador.");
-    return;
-  }
+  Ethernet.init(PINO_W5500_CS);
 
-  delay(1000);
-
-  Serial.print("IP do ESP32: ");
-  Serial.println(Ethernet.localIP());
-
-  Serial.print("Gateway: ");
-  Serial.println(Ethernet.gatewayIP());
-
-  Serial.print("Mascara: ");
-  Serial.println(Ethernet.subnetMask());
-
-  Serial.print("IP do broker MQTT: ");
-  Serial.println(ipBroker);
+  tentarObterIPEthernet();
 }
 
 // ==================================================
-// CONEXÃO MQTT
+// VERIFICACAO DE ETHERNET
 // ==================================================
 
-void conectarMQTT() {
-  if (clienteMQTT.connected()) {
+bool ethernetDisponivel() {
+  prepararSPIParaEthernet();
+
+  // Nao usamos Ethernet.hardwareStatus() aqui porque ele retornou
+  // "nao encontrado" no seu teste anterior, mesmo com o W5500 funcionando.
+  // A verificacao pratica sera: cabo/link + IP valido por DHCP.
+
+  if (Ethernet.linkStatus() == LinkOFF) {
+    if (ethernetComIP) {
+      Serial.println("Cabo Ethernet desconectado.");
+    }
+
+    ethernetComIP = false;
+    return false;
+  }
+
+  if (!ethernetComIP || !ipValido(Ethernet.localIP())) {
+    unsigned long tempoAtual = millis();
+
+    if (tempoAtual - ultimaTentativaEthernetDHCP >= intervaloTentativaEthernetDHCP) {
+      ultimaTentativaEthernetDHCP = tempoAtual;
+      return tentarObterIPEthernet();
+    }
+
+    return false;
+  }
+
+  return true;
+}
+
+// ==================================================
+// CONEXAO WI-FI RESERVA
+// ==================================================
+
+bool conectarWiFiReserva() {
+  if (WiFi.status() == WL_CONNECTED) {
+    return true;
+  }
+
+  unsigned long tempoAtual = millis();
+
+  if (tempoAtual - ultimaTentativaWiFi < intervaloTentativaWiFi) {
+    return false;
+  }
+
+  ultimaTentativaWiFi = tempoAtual;
+
+  Serial.println();
+  Serial.println("====================================");
+  Serial.println("TENTANDO WI-FI RESERVA");
+  Serial.println("====================================");
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssidWiFi, senhaWiFi);
+
+  unsigned long inicio = millis();
+
+  while (WiFi.status() != WL_CONNECTED && millis() - inicio < 10000) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("Wi-Fi reserva conectado.");
+
+    Serial.print("IP Wi-Fi: ");
+    Serial.println(WiFi.localIP());
+
+    return true;
+  }
+
+  Serial.println("Falha ao conectar no Wi-Fi reserva.");
+  return false;
+}
+
+// ==================================================
+// TROCA DO CLIENTE MQTT
+// ==================================================
+
+void selecionarClienteMQTT(TipoConexao novaConexao) {
+  if (conexaoAtual == novaConexao) {
     return;
+  }
+
+  if (clienteMQTT.connected()) {
+    clienteMQTT.disconnect();
+  }
+
+  if (novaConexao == CONEXAO_ETHERNET) {
+    clienteMQTT.setClient(clienteEthernet);
+    Serial.println("MQTT configurado para usar Ethernet.");
+  } else if (novaConexao == CONEXAO_WIFI) {
+    clienteMQTT.setClient(clienteWiFi);
+    Serial.println("MQTT configurado para usar Wi-Fi reserva.");
+  } else {
+    Serial.println("MQTT sem conexao de rede disponivel.");
+  }
+
+  clienteMQTT.setServer(ipBroker, portaMQTT);
+  conexaoAtual = novaConexao;
+  falhasMQTTConsecutivas = 0;
+}
+
+// ==================================================
+// ATUALIZACAO DA CONEXAO PRINCIPAL / RESERVA
+// ==================================================
+
+void atualizarConexao() {
+  bool ethernetOk = ethernetDisponivel();
+
+  if (wifiReservaPorFalhaEthernet) {
+    if (millis() - inicioFallbackWiFi >= tempoRetornoParaEthernet) {
+      wifiReservaPorFalhaEthernet = false;
+      Serial.println("Nova tentativa de retorno para Ethernet habilitada.");
+    }
+  }
+
+  if (ethernetOk && !wifiReservaPorFalhaEthernet) {
+    if (conexaoAtual != CONEXAO_ETHERNET) {
+      Serial.println();
+      Serial.println("Ethernet disponivel. Usando Ethernet como conexao principal.");
+
+      selecionarClienteMQTT(CONEXAO_ETHERNET);
+
+      if (WiFi.status() == WL_CONNECTED) {
+        WiFi.disconnect();
+        Serial.println("Wi-Fi reserva desconectado. Ethernet reassumiu a prioridade.");
+      }
+    }
+
+    return;
+  }
+
+  if (!ethernetOk) {
+    Serial.println("Ethernet indisponivel. Tentando usar Wi-Fi reserva.");
+  } else if (wifiReservaPorFalhaEthernet) {
+    Serial.println("Ethernet com falhas MQTT recentes. Mantendo Wi-Fi reserva temporariamente.");
+  }
+
+  if (WiFi.status() == WL_CONNECTED || conectarWiFiReserva()) {
+    if (conexaoAtual != CONEXAO_WIFI) {
+      Serial.println("Usando Wi-Fi como conexao reserva.");
+      selecionarClienteMQTT(CONEXAO_WIFI);
+    }
+
+    return;
+  }
+
+  if (conexaoAtual != CONEXAO_OFFLINE) {
+    Serial.println("Sem Ethernet e sem Wi-Fi. Gateway em modo offline.");
+  }
+
+  selecionarClienteMQTT(CONEXAO_OFFLINE);
+}
+
+// ==================================================
+// CONEXAO MQTT
+// ==================================================
+
+bool conectarMQTT() {
+  if (conexaoAtual == CONEXAO_OFFLINE) {
+    return false;
+  }
+
+  if (clienteMQTT.connected()) {
+    return true;
   }
 
   unsigned long tempoAtual = millis();
 
   if (tempoAtual - ultimaTentativaMQTT < intervaloReconexaoMQTT) {
-    return;
+    return false;
   }
 
   ultimaTentativaMQTT = tempoAtual;
 
-  prepararSPIParaEthernet();
+  prepararRedeParaMQTT();
 
   Serial.println();
-  Serial.print("Conectando ao Mosquitto em ");
+  Serial.print("Conectando ao Mosquitto via ");
+  Serial.print(nomeConexao(conexaoAtual));
+  Serial.print(" em ");
   Serial.print(ipBroker);
   Serial.print(":");
   Serial.println(portaMQTT);
 
   uint64_t chipID = ESP.getEfuseMac();
 
-  char idCliente[40];
+  char idCliente[50];
 
   snprintf(
     idCliente,
@@ -298,21 +578,45 @@ void conectarMQTT() {
   );
 
   if (conectado) {
-    Serial.println("MQTT conectado!");
+    Serial.print("MQTT conectado via ");
+    Serial.println(nomeConexao(conexaoAtual));
 
     clienteMQTT.publish(
       topicoStatus,
       "online",
       true
     );
-  } else {
-    Serial.print("Falha na conexao MQTT. Codigo: ");
-    Serial.println(clienteMQTT.state());
+
+    falhasMQTTConsecutivas = 0;
+    return true;
   }
+
+  Serial.print("Falha na conexao MQTT via ");
+  Serial.print(nomeConexao(conexaoAtual));
+  Serial.print(". Codigo: ");
+  Serial.println(clienteMQTT.state());
+
+  falhasMQTTConsecutivas++;
+
+  if (
+    conexaoAtual == CONEXAO_ETHERNET &&
+    falhasMQTTConsecutivas >= limiteFalhasMQTTEthernet
+  ) {
+    Serial.println("Limite de falhas MQTT pela Ethernet atingido.");
+    Serial.println("Ativando Wi-Fi reserva temporariamente.");
+
+    wifiReservaPorFalhaEthernet = true;
+    inicioFallbackWiFi = millis();
+
+    selecionarClienteMQTT(CONEXAO_OFFLINE);
+    atualizarConexao();
+  }
+
+  return false;
 }
 
 // ==================================================
-// VALIDAÇÃO DOS DADOS
+// VALIDACAO DOS DADOS
 // ==================================================
 
 bool dadosValidos(const DadosAmbientais& leitura) {
@@ -361,7 +665,7 @@ void montarJson(const DadosAmbientais& leitura, char* json, size_t tamanhoJson) 
 }
 
 // ==================================================
-// PUBLICAÇÃO MQTT
+// PUBLICACAO MQTT
 // ==================================================
 
 bool publicarDadosMQTT(const DadosAmbientais& leitura, const char* json) {
@@ -370,7 +674,7 @@ bool publicarDadosMQTT(const DadosAmbientais& leitura, const char* json) {
     return false;
   }
 
-  prepararSPIParaEthernet();
+  prepararRedeParaMQTT();
 
   bool sucesso = true;
 
@@ -394,10 +698,24 @@ bool publicarDadosMQTT(const DadosAmbientais& leitura, const char* json) {
   sucesso = sucesso && clienteMQTT.publish(topicoDados, json, true);
 
   if (sucesso) {
-    Serial.println("Dados publicados no MQTT:");
+    Serial.print("Dados publicados no MQTT via ");
+    Serial.println(nomeConexao(conexaoAtual));
     Serial.println(json);
+
+    falhasMQTTConsecutivas = 0;
   } else {
     Serial.println("Erro ao publicar um ou mais topicos MQTT.");
+
+    falhasMQTTConsecutivas++;
+
+    if (
+      conexaoAtual == CONEXAO_ETHERNET &&
+      falhasMQTTConsecutivas >= limiteFalhasMQTTEthernet
+    ) {
+      Serial.println("Falhas de publicacao pela Ethernet. Wi-Fi reserva sera tentado.");
+      wifiReservaPorFalhaEthernet = true;
+      inicioFallbackWiFi = millis();
+    }
   }
 
   return sucesso;
@@ -409,6 +727,10 @@ bool publicarDadosMQTT(const DadosAmbientais& leitura, const char* json) {
 
 void reenviarPendentesMQTT() {
   if (!microSdOk) {
+    return;
+  }
+
+  if (conexaoAtual == CONEXAO_OFFLINE) {
     return;
   }
 
@@ -445,7 +767,13 @@ void reenviarPendentesMQTT() {
   int reenviados = 0;
   int mantidos = 0;
 
-  while (pendentes.available()) {
+  while (true) {
+    prepararSPIParaSD();
+
+    if (!pendentes.available()) {
+      break;
+    }
+
     String linha = pendentes.readStringUntil('\n');
     linha.trim();
 
@@ -453,7 +781,7 @@ void reenviarPendentesMQTT() {
       continue;
     }
 
-    prepararSPIParaEthernet();
+    prepararRedeParaMQTT();
 
     bool enviado = clienteMQTT.publish(
       topicoDados,
@@ -475,13 +803,15 @@ void reenviarPendentesMQTT() {
       mantidos++;
 
       Serial.println("Falha ao reenviar pendente. Mantendo no microSD.");
+
+      falhasMQTTConsecutivas++;
     }
   }
 
+  prepararSPIParaSD();
+
   pendentes.close();
   temporario.close();
-
-  prepararSPIParaSD();
 
   SD.remove(ARQUIVO_PENDENTES);
 
@@ -498,7 +828,7 @@ void reenviarPendentesMQTT() {
 }
 
 // ==================================================
-// IMPRESSÃO DOS DADOS NO SERIAL
+// IMPRESSAO DOS DADOS NO SERIAL
 // ==================================================
 
 void imprimirDados(const DadosAmbientais& leitura) {
@@ -562,7 +892,14 @@ void processarLinhaUART(const char* linha) {
   char json[200];
   montarJson(dados, json, sizeof(json));
 
-  bool publicado = publicarDadosMQTT(dados, json);
+  atualizarConexao();
+
+  bool mqttDisponivel = conectarMQTT();
+  bool publicado = false;
+
+  if (mqttDisponivel) {
+    publicado = publicarDadosMQTT(dados, json);
+  }
 
   if (!publicado) {
     salvarPendenteMQTT(json);
@@ -572,7 +909,7 @@ void processarLinhaUART(const char* linha) {
 }
 
 // ==================================================
-// LEITURA NÃO BLOQUEANTE DA UART
+// LEITURA NAO BLOQUEANTE DA UART
 // ==================================================
 
 void receberUART() {
@@ -622,13 +959,15 @@ void setup() {
   SPI.begin(
     PINO_SPI_SCK,
     PINO_SPI_MISO,
-    PINO_SPI_MOSI
+    PINO_SPI_MOSI,
+    PINO_W5500_CS
   );
 
   Serial.println();
   Serial.println("====================================");
   Serial.println("GATEWAY AMBIENTAL ESP32");
-  Serial.println("UART + W5500 + MQTT + microSD");
+  Serial.println("UART + W5500 + Wi-Fi reserva + MQTT + microSD");
+  Serial.println("Prioridade: Ethernet > Wi-Fi > microSD");
   Serial.println("====================================");
 
   SerialSensores.begin(
@@ -638,15 +977,19 @@ void setup() {
     PINO_UART_TX
   );
 
-  iniciarMicroSD();
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
 
   iniciarEthernet();
+
+  iniciarMicroSD();
 
   clienteMQTT.setServer(
     ipBroker,
     portaMQTT
   );
 
+  atualizarConexao();
   conectarMQTT();
 }
 
@@ -655,11 +998,21 @@ void setup() {
 // ==================================================
 
 void loop() {
-  Ethernet.maintain();
+  if (conexaoAtual == CONEXAO_ETHERNET) {
+    prepararSPIParaEthernet();
+    Ethernet.maintain();
+  }
+
+  if (millis() - ultimoCheckConexao >= intervaloCheckConexao) {
+    ultimoCheckConexao = millis();
+    atualizarConexao();
+  }
 
   conectarMQTT();
 
-  clienteMQTT.loop();
+  if (clienteMQTT.connected()) {
+    clienteMQTT.loop();
+  }
 
   receberUART();
 
