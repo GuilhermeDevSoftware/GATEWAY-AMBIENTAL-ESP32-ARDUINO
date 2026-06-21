@@ -2,7 +2,7 @@
 
 Projeto de um sistema embarcado para monitoramento ambiental utilizando um **Arduino Uno** para realizar a leitura dos sensores e um **ESP32** para funcionar como gateway de comunicação.
 
-O Arduino coleta os dados ambientais e envia as informações para o ESP32 por comunicação UART. O ESP32 recebe e valida os dados, conecta-se à rede Ethernet por meio do módulo W5500 e publica as leituras em um broker MQTT. No computador, o Mosquitto recebe as mensagens MQTT e o Node-RED exibe os dados em dashboard, registra leituras em CSV e armazena o histórico em banco de dados SQLite.
+O Arduino coleta os dados ambientais e envia as informações para o ESP32 por comunicação UART. O ESP32 recebe e valida os dados, conecta-se à rede Ethernet por meio do módulo W5500, publica as leituras em um broker MQTT e também grava as leituras localmente em um cartão microSD. Caso o broker MQTT esteja indisponível, o ESP32 salva os pacotes como pendentes no microSD e realiza o reenvio automático quando a conexão MQTT volta a funcionar. No computador, o Mosquitto recebe as mensagens MQTT e o Node-RED exibe os dados em dashboard, registra leituras em CSV e armazena o histórico em banco de dados SQLite.
 
 ---
 
@@ -23,8 +23,10 @@ Desenvolver um gateway ambiental capaz de:
 * Gerar gráficos, medidores e alertas no dashboard;
 * Registrar as leituras em arquivo CSV;
 * Armazenar o histórico em banco SQLite;
-* Futuramente armazenar dados no microSD do ESP32;
-* Futuramente implementar reenvio de dados, Wi-Fi reserva, página web, watchdog, FreeRTOS e OTA.
+* Armazenar as leituras localmente no microSD do ESP32;
+* Salvar pacotes pendentes no microSD quando o MQTT falhar;
+* Reenviar automaticamente os pacotes pendentes quando o MQTT voltar;
+* Futuramente implementar Wi-Fi reserva, página web, watchdog, FreeRTOS e OTA.
 
 ---
 
@@ -42,6 +44,9 @@ ESP32 Gateway
    │
    ├── Ethernet W5500
    ├── MQTT
+   ├── microSD
+   │     ├── Histórico local
+   │     └── Pacotes pendentes
    └── Publicação dos dados
           │
           ▼
@@ -58,6 +63,7 @@ Fluxo principal do sistema:
 
 ```text
 Sensores → Arduino Uno → UART → ESP32 → Ethernet W5500 → MQTT → Node-RED → SQLite
+                              └── microSD → histórico local e pendentes MQTT
 ```
 
 ---
@@ -67,6 +73,8 @@ Sensores → Arduino Uno → UART → ESP32 → Ethernet W5500 → MQTT → Node
 * 1 Arduino Uno;
 * 1 ESP32;
 * 1 módulo Ethernet W5500;
+* 1 módulo leitor de cartão microSD;
+* 1 cartão microSD;
 * 1 sensor DHT11;
 * 1 sensor de umidade do solo;
 * 1 LDR;
@@ -79,11 +87,10 @@ Sensores → Arduino Uno → UART → ESP32 → Ethernet W5500 → MQTT → Node
 
 ### Componentes planejados para as próximas etapas
 
-* Módulo leitor de cartão microSD;
-* Cartão microSD;
 * LED ou buzzer para indicação de falhas;
 * Fonte de alimentação independente;
-* Caixa para montagem do protótipo.
+* Caixa para montagem do protótipo;
+* Possível uso do Wi-Fi do ESP32 como conexão reserva.
 
 ---
 
@@ -125,7 +132,9 @@ Ele é responsável por:
 * Conectar-se ao broker MQTT;
 * Publicar os dados dos sensores em tópicos MQTT;
 * Publicar também um pacote completo em formato de objeto para o Node-RED;
-* Futuramente armazenar dados no cartão microSD;
+* Armazenar o histórico das leituras no cartão microSD;
+* Salvar pacotes pendentes no microSD quando o MQTT estiver indisponível;
+* Reenviar automaticamente os pacotes pendentes quando o MQTT voltar;
 * Futuramente disponibilizar uma página web;
 * Futuramente utilizar Wi-Fi como conexão reserva.
 
@@ -359,6 +368,97 @@ O CSV serve como registro simples e fácil de abrir em planilhas, enquanto o SQL
 
 ---
 
+## microSD no ESP32
+
+O microSD foi implementado diretamente no ESP32 para permitir armazenamento local no próprio gateway.
+
+O cartão é utilizado para duas funções principais:
+
+* Registrar o histórico local das leituras;
+* Guardar pacotes MQTT pendentes quando o broker estiver desligado ou indisponível.
+
+Arquivos utilizados no microSD:
+
+```text
+/dados_gateway.csv
+/pendentes_mqtt.txt
+/pendentes_tmp.txt
+```
+
+Função de cada arquivo:
+
+| Arquivo | Função |
+| ------- | ------ |
+| `/dados_gateway.csv` | Histórico local das leituras recebidas via UART |
+| `/pendentes_mqtt.txt` | Pacotes JSON que não conseguiram ser publicados no MQTT |
+| `/pendentes_tmp.txt` | Arquivo temporário usado durante o reenvio dos pendentes |
+
+Formato do CSV salvo no ESP32:
+
+```csv
+timestamp_ms,temperatura,umidade_ar,umidade_solo,luminosidade,chuva
+12500,21.40,41.00,1023,474,1022
+```
+
+Exemplo de pacote pendente salvo no microSD:
+
+```json
+{"temperatura":21.4,"umidade_ar":41.0,"umidade_solo":1023,"luminosidade":474,"chuva":1022}
+```
+
+Funcionamento da fila de pendentes:
+
+```text
+ESP32 tenta publicar no MQTT
+        │
+        ├── Publicou com sucesso
+        │       └── Mantém apenas o histórico no CSV
+        │
+        └── Falhou
+                └── Salva o JSON em /pendentes_mqtt.txt
+```
+
+Quando o MQTT volta a funcionar:
+
+```text
+ESP32 reconecta ao Mosquitto
+        ↓
+Abre /pendentes_mqtt.txt
+        ↓
+Reenvia os pacotes salvos
+        ↓
+Remove os pacotes reenviados
+        ↓
+Mantém apenas os que ainda falharem
+```
+
+Teste realizado:
+
+```text
+MQTT desconectado. Pacote nao publicado.
+Pacote salvo como pendente no microSD.
+```
+
+Depois que o Mosquitto voltou:
+
+```text
+Pendente reenviado:
+{"temperatura":21.4,"umidade_ar":41.0,"umidade_solo":1023,"luminosidade":474,"chuva":1022}
+
+Reenvio finalizado. Reenviados: 47 | Ainda pendentes: 0
+```
+
+Resultado da etapa:
+
+```text
+Backup offline funcionando
+Fila de pendentes funcionando
+Reenvio automático funcionando
+Nenhum pacote pendente restante após a reconexão
+```
+
+---
+
 # Etapas do projeto
 
 ## Etapa 1 — Teste individual dos sensores
@@ -530,46 +630,75 @@ Implementações realizadas:
 
 ## Etapa 13 — Armazenamento no cartão microSD do ESP32
 
-O ESP32 deverá armazenar as leituras em um arquivo no cartão microSD.
+O ESP32 armazena as leituras recebidas via UART em um arquivo CSV no cartão microSD.
 
 Objetivo da etapa:
 
 * Registrar dados localmente no próprio gateway;
-* Permitir funcionamento mesmo sem conexão MQTT;
-* Preparar a lógica de armazenamento offline;
-* Futuramente reenviar os dados quando a conexão voltar.
+* Manter um histórico independente do computador;
+* Permitir análise posterior das leituras;
+* Preparar a lógica de armazenamento offline.
 
-Nome de arquivo planejado:
+Arquivo utilizado:
 
 ```text
-/dados_ambientais.csv
+/dados_gateway.csv
 ```
 
-Exemplo de conteúdo planejado:
+Exemplo de conteúdo:
 
 ```csv
-data_hora,temperatura,umidade_ar,umidade_solo,luminosidade,chuva,status_mqtt
-2026-06-20 11:30:00,23.4,46,1023,716,1022,online
+timestamp_ms,temperatura,umidade_ar,umidade_solo,luminosidade,chuva
+12500,21.40,41.00,1023,474,1022
 ```
 
-**Status:** próximo passo.
+Resultado obtido no monitor serial:
+
+```text
+microSD inicializado com sucesso.
+Leitura salva no microSD.
+```
+
+**Status:** concluído.
 
 ---
 
 ## Etapa 14 — Armazenamento offline e reenvio
 
-Quando o ESP32 perder a conexão com o broker MQTT, os dados serão armazenados no cartão microSD.
+Quando o ESP32 perde a conexão com o broker MQTT, os pacotes são armazenados no cartão microSD como pendentes.
 
-Funcionamento planejado:
+Funcionamento implementado:
 
-1. O ESP32 detecta a falha de conexão;
-2. As novas leituras são armazenadas no cartão microSD;
-3. O gateway continua recebendo dados do Arduino;
-4. O ESP32 tenta reconectar ao broker;
-5. Depois da reconexão, os dados armazenados são reenviados;
-6. Os registros enviados são removidos ou marcados como processados.
+1. O ESP32 recebe os dados do Arduino por UART;
+2. O pacote é validado;
+3. O ESP32 tenta publicar no MQTT;
+4. Se a publicação falhar, o JSON é salvo em `/pendentes_mqtt.txt`;
+5. O gateway continua funcionando e recebendo novas leituras;
+6. O ESP32 tenta reconectar ao broker;
+7. Depois da reconexão, os pacotes pendentes são reenviados;
+8. Os pacotes reenviados são removidos da fila de pendentes.
 
-**Status:** pendente.
+Arquivos utilizados:
+
+```text
+/pendentes_mqtt.txt
+/pendentes_tmp.txt
+```
+
+Resultado obtido durante o teste com o Mosquitto desligado:
+
+```text
+MQTT desconectado. Pacote nao publicado.
+Pacote salvo como pendente no microSD.
+```
+
+Resultado obtido após ligar o Mosquitto novamente:
+
+```text
+Reenvio finalizado. Reenviados: 47 | Ainda pendentes: 0
+```
+
+**Status:** concluído.
 
 ---
 
@@ -673,37 +802,60 @@ Atualmente, o sistema consegue:
 * Exibir os dados no Node-RED Dashboard;
 * Exibir gauges, gráficos e textos no dashboard;
 * Gerar alertas no Node-RED;
-* Registrar dados em arquivo CSV;
+* Registrar dados em arquivo CSV pelo Node-RED;
 * Registrar dados em banco SQLite;
-* Consultar as últimas leituras salvas no SQLite.
+* Consultar as últimas leituras salvas no SQLite;
+* Inicializar o microSD no ESP32;
+* Gravar histórico local em `/dados_gateway.csv`;
+* Detectar falha de publicação MQTT;
+* Salvar pacotes MQTT pendentes no microSD;
+* Reenviar automaticamente os pacotes pendentes após reconexão;
+* Limpar a fila de pendentes após o reenvio com sucesso.
 
 ---
 
 ## Próximo passo
 
-O próximo passo recomendado é iniciar o armazenamento local no **cartão microSD conectado ao ESP32**.
+O próximo passo recomendado é implementar o **Wi-Fi como conexão reserva**.
+
+Atualmente, a Ethernet com W5500 é a conexão principal do gateway. A próxima evolução é fazer o ESP32 tentar usar Wi-Fi caso a comunicação pela Ethernet falhe.
 
 Objetivo do próximo passo:
 
 ```text
-Salvar as leituras no próprio gateway para que o sistema continue registrando dados mesmo se o MQTT, o computador ou o Node-RED ficarem indisponíveis.
+Manter o gateway conectado ao broker MQTT mesmo se houver falha no cabo Ethernet, no roteador cabeado ou no módulo W5500.
 ```
 
 Fluxo desejado da próxima etapa:
 
 ```text
-Arduino → UART → ESP32 → validação → MQTT
-                              └── microSD
+Arduino → UART → ESP32
+                  │
+                  ├── Ethernet W5500 → MQTT
+                  │
+                  ├── Wi-Fi reserva → MQTT
+                  │
+                  └── microSD → histórico e pendentes
+```
+
+Ordem de prioridade planejada:
+
+```text
+1. Usar Ethernet/W5500 como conexão principal
+2. Se Ethernet falhar, tentar Wi-Fi
+3. Se MQTT continuar indisponível, salvar no microSD
+4. Quando a conexão voltar, reenviar os pendentes
 ```
 
 Primeira implementação do próximo passo:
 
-1. Conectar o módulo microSD ao ESP32;
-2. Inicializar o cartão microSD no código;
-3. Criar ou abrir um arquivo CSV;
-4. Gravar as leituras recebidas via UART;
-5. Confirmar a gravação pelo monitor serial;
-6. Manter a publicação MQTT funcionando junto com a gravação local.
+1. Adicionar as credenciais da rede Wi-Fi no código do ESP32;
+2. Detectar se a Ethernet está disponível;
+3. Manter Ethernet como conexão principal;
+4. Conectar no Wi-Fi quando a Ethernet falhar;
+5. Publicar no MQTT usando a conexão disponível;
+6. Manter o microSD como backup caso nenhuma conexão funcione;
+7. Testar desconectando o cabo Ethernet.
 
 ---
 
@@ -720,7 +872,9 @@ Primeira implementação do próximo passo:
 * Criar níveis de alerta;
 * Implementar confirmação de entrega;
 * Adicionar CRC ao pacote UART;
-* Implementar buffer offline no microSD;
+* Melhorar o buffer offline no microSD com limite de tamanho;
+* Adicionar contagem de pacotes pendentes;
+* Adicionar identificação única para cada leitura;
 * Reenviar dados armazenados quando a conexão voltar;
 * Criar uma página web de configuração;
 * Implementar watchdog;
