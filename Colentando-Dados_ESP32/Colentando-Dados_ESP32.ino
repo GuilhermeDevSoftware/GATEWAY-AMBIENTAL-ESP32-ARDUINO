@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <SD.h>
+#include <Update.h>
 #include "esp_task_wdt.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
@@ -49,6 +50,24 @@
 // Envie a letra T pelo Monitor Serial para simular um travamento.
 // Depois do teste, pode trocar para false.
 #define HABILITAR_TESTE_WATCHDOG true
+
+// ==================================================
+// CONFIGURACAO DA ATUALIZACAO OTA
+// ==================================================
+
+// Versao exibida na pagina web, no painel tecnico e no JSON.
+// Atualize este texto a cada nova versao importante do firmware.
+#define VERSAO_FIRMWARE "19.0.1-TESTE-OTA3"
+
+// Autenticacao basica da rota /ota.
+// Usuario: admin
+// Senha: gateway123
+//
+// O valor abaixo e o Base64 de "admin:gateway123".
+// Em um produto real, o ideal e nao deixar a senha fixa no codigo.
+const char* OTA_USUARIO = "admin";
+const char* OTA_SENHA   = "gateway123";
+const char* OTA_AUTH_HEADER = "Authorization: Basic YWRtaW46Z2F0ZXdheTEyMw==";
 
 // ==================================================
 // CONFIGURACAO DO microSD
@@ -191,6 +210,17 @@ String motivoUltimoReset = "Nao identificado";
 RTC_DATA_ATTR unsigned long totalResetsWatchdog = 0;
 
 // ==================================================
+// DIAGNOSTICO DA ATUALIZACAO OTA
+// ==================================================
+
+volatile bool otaEmAndamento = false;
+bool otaUltimoSucesso = false;
+String otaUltimaMensagem = "Nenhuma atualizacao OTA executada";
+unsigned long otaUltimaAtualizacaoMs = 0;
+size_t otaBytesRecebidos = 0;
+size_t otaTamanhoEsperado = 0;
+
+// ==================================================
 // CONFIGURACAO DO FREERTOS
 // ==================================================
 
@@ -246,7 +276,7 @@ const uint32_t stacksTarefasSistema[TOTAL_TAREFAS_SISTEMA] = {
   8192,
   6144,
   4096,
-  8192,
+  12288,
   4096
 };
 
@@ -603,7 +633,7 @@ void enviarCSSDashboard(Client& cliente) {
   cliente.println(".wrap{width:min(1180px,94%);margin:0 auto;padding:24px 0 36px}.top{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:22px;padding:18px 20px;border:1px solid var(--border);background:rgba(17,24,39,.92);border-radius:18px;box-shadow:0 20px 50px rgba(0,0,0,.25)}");
   cliente.println(".brand h1{margin:0;font-size:1.55rem;letter-spacing:.3px}.brand p{margin:6px 0 0;color:var(--muted);font-size:.95rem}.pill{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;font-weight:700;border:1px solid var(--border);background:#0b1220}.dot{width:10px;height:10px;border-radius:50%;display:inline-block}.dot.ok{background:var(--ok);box-shadow:0 0 14px var(--ok)}.dot.warn{background:var(--warn);box-shadow:0 0 14px var(--warn)}.dot.erro{background:var(--err);box-shadow:0 0 14px var(--err)}");
   cliente.println(".grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px}.grid.sensors{grid-template-columns:repeat(5,1fr)}.card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 14px 34px rgba(0,0,0,.22)}.card h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin:0 0 12px}.value{font-size:1.8rem;font-weight:800;margin:0}.unit{font-size:.95rem;color:var(--muted);font-weight:600}.sub{margin-top:8px;color:var(--muted);font-size:.9rem;word-break:break-word}.statusText{font-size:1.25rem;font-weight:800;margin:0}.okText{color:var(--ok)}.warnText{color:var(--warn)}.errText{color:var(--err)}.blueText{color:var(--blue)}");
-  cliente.println(".section{margin:22px 0 12px;display:flex;justify-content:space-between;align-items:end;gap:12px}.section h2{margin:0;font-size:1.05rem}.section span{color:var(--muted);font-size:.9rem}.table{width:100%;border-collapse:collapse}.table td{padding:10px 0;border-bottom:1px solid rgba(51,65,85,.75)}.table tr:last-child td{border-bottom:0}.table td:first-child{color:var(--muted)}.table td:last-child{text-align:right;font-weight:700}.actions{display:flex;gap:10px;flex-wrap:wrap}.btn{display:inline-block;padding:11px 14px;border-radius:12px;text-decoration:none;color:var(--text);border:1px solid var(--border);background:#0b1220;font-weight:700}.btn.primary{border-color:#0ea5e9;background:rgba(14,165,233,.14);color:#7dd3fc}.footer{margin-top:18px;color:var(--muted);font-size:.85rem;text-align:center}");
+  cliente.println(".section{margin:22px 0 12px;display:flex;justify-content:space-between;align-items:end;gap:12px}.section h2{margin:0;font-size:1.05rem}.section span{color:var(--muted);font-size:.9rem}.table{width:100%;border-collapse:collapse}.table td{padding:10px 0;border-bottom:1px solid rgba(51,65,85,.75)}.table tr:last-child td{border-bottom:0}.table td:first-child{color:var(--muted)}.table td:last-child{text-align:right;font-weight:700}.actions{display:flex;gap:10px;flex-wrap:wrap}.btn{display:inline-block;padding:11px 14px;border-radius:12px;text-decoration:none;color:var(--text);border:1px solid var(--border);background:#0b1220;font-weight:700;cursor:pointer}.btn.primary{border-color:#0ea5e9;background:rgba(14,165,233,.14);color:#7dd3fc}.btn.danger{border-color:rgba(239,68,68,.65);background:rgba(239,68,68,.12);color:#fecaca}.footer{margin-top:18px;color:var(--muted);font-size:.85rem;text-align:center}.formRow{display:flex;flex-direction:column;gap:8px;margin:12px 0}.inputFile{width:100%;padding:14px;border-radius:12px;border:1px dashed var(--border);background:#0b1220;color:var(--text)}.alert{padding:12px 14px;border-radius:12px;border:1px solid var(--border);background:#0b1220;margin-top:12px}.alert.warn{border-color:rgba(250,204,21,.45);background:rgba(250,204,21,.10)}.alert.err{border-color:rgba(239,68,68,.45);background:rgba(239,68,68,.10)}.alert.ok{border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.10)}");
   cliente.println(".grid.four{grid-template-columns:repeat(4,1fr)}.wide{overflow-x:auto}.techTable{min-width:860px}.techTable th,.techTable td{padding:10px 12px;border-bottom:1px solid rgba(51,65,85,.75);text-align:left}.techTable th{font-size:.75rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:800}.techTable td{font-size:.92rem}.techTable td.num{text-align:right;font-weight:800}.badge{display:inline-block;padding:5px 9px;border-radius:999px;font-size:.78rem;font-weight:900;border:1px solid var(--border);background:#0b1220}.okBadge{color:var(--ok);border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.10)}.warnBadge{color:var(--warn);border-color:rgba(250,204,21,.45);background:rgba(250,204,21,.10)}.errBadge{color:var(--err);border-color:rgba(239,68,68,.45);background:rgba(239,68,68,.10)}");
   cliente.println("@media(max-width:900px){.grid,.grid.sensors{grid-template-columns:repeat(2,1fr)}.top{align-items:flex-start;flex-direction:column}.pill{align-self:flex-start}}@media(max-width:560px){.grid,.grid.sensors{grid-template-columns:1fr}.wrap{width:92%;padding-top:16px}.value{font-size:1.55rem}.table td:last-child{text-align:left}.table td{display:block;border-bottom:0;padding:5px 0}.table tr{display:block;border-bottom:1px solid rgba(51,65,85,.75);padding:8px 0}}");
   cliente.println("</style>");
@@ -649,6 +679,494 @@ void enviarCardSensor(Client& cliente, const char* titulo, const String& valor, 
   }
   cliente.println("</p>");
   cliente.println("</div>");
+}
+
+// ==================================================
+// ATUALIZACAO OTA VIA PAGINA WEB
+// ==================================================
+
+bool requisicaoOTAAutorizada(const String& requisicao) {
+  return requisicao.indexOf(OTA_AUTH_HEADER) >= 0;
+}
+
+int obterContentLength(const String& requisicao) {
+  int pos = requisicao.indexOf("Content-Length:");
+
+  if (pos < 0) {
+    return -1;
+  }
+
+  int inicio = pos + strlen("Content-Length:");
+  int fim = requisicao.indexOf("\r\n", inicio);
+
+  if (fim < 0) {
+    return -1;
+  }
+
+  String valor = requisicao.substring(inicio, fim);
+  valor.trim();
+
+  return valor.toInt();
+}
+
+String obterBoundaryMultipart(const String& requisicao) {
+  int pos = requisicao.indexOf("boundary=");
+
+  if (pos < 0) {
+    return "";
+  }
+
+  int inicio = pos + strlen("boundary=");
+  int fim = requisicao.indexOf("\r\n", inicio);
+
+  if (fim < 0) {
+    fim = requisicao.length();
+  }
+
+  String boundary = requisicao.substring(inicio, fim);
+  boundary.trim();
+
+  if (boundary.startsWith("\"") && boundary.endsWith("\"")) {
+    boundary = boundary.substring(1, boundary.length() - 1);
+  }
+
+  if (boundary.startsWith("--")) {
+    boundary = boundary.substring(2);
+  }
+
+  return boundary;
+}
+
+void atualizarStatusOTA(const String& mensagem, bool sucesso) {
+  otaUltimaMensagem = mensagem;
+  otaUltimoSucesso = sucesso;
+  otaUltimaAtualizacaoMs = millis();
+}
+
+String tempoUltimaOTA() {
+  if (otaUltimaAtualizacaoMs == 0) {
+    return "Nunca executada";
+  }
+
+  unsigned long segundos = (millis() - otaUltimaAtualizacaoMs) / 1000;
+
+  if (segundos < 60) {
+    return String(segundos) + " s atras";
+  }
+
+  unsigned long minutos = segundos / 60;
+
+  if (minutos < 60) {
+    return String(minutos) + " min atras";
+  }
+
+  unsigned long horas = minutos / 60;
+  return String(horas) + " h atras";
+}
+
+String lerLinhaCorpoHTTP(Client& cliente, int& bytesLidos, int contentLength, uint32_t timeoutMs) {
+  String linha = "";
+  unsigned long inicio = millis();
+
+  while (bytesLidos < contentLength && millis() - inicio < timeoutMs) {
+    while (cliente.available() && bytesLidos < contentLength) {
+      char c = cliente.read();
+      bytesLidos++;
+      linha += c;
+
+      if (c == '\n') {
+        return linha;
+      }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+
+  return linha;
+}
+
+bool descartarBytesHTTP(Client& cliente, int quantidade, int& bytesLidos, int contentLength) {
+  uint8_t buffer[256];
+  int restantes = quantidade;
+  unsigned long ultimoDado = millis();
+
+  while (restantes > 0 && bytesLidos < contentLength) {
+    int disponivel = cliente.available();
+
+    if (disponivel <= 0) {
+      if (millis() - ultimoDado > 8000) {
+        return false;
+      }
+
+      vTaskDelay(pdMS_TO_TICKS(1));
+      continue;
+    }
+
+    ultimoDado = millis();
+
+    int paraLer = disponivel;
+
+    if (paraLer > (int)sizeof(buffer)) {
+      paraLer = sizeof(buffer);
+    }
+
+    if (paraLer > restantes) {
+      paraLer = restantes;
+    }
+
+    int lidos = cliente.read(buffer, paraLer);
+
+    if (lidos > 0) {
+      bytesLidos += lidos;
+      restantes -= lidos;
+    }
+
+    atualizarHeartbeat(TAREFA_WEB);
+  }
+
+  return restantes == 0;
+}
+
+void enviarNaoAutorizadoOTA(Client& cliente) {
+  cliente.println("HTTP/1.1 401 Unauthorized");
+  cliente.println("Content-Type: text/html; charset=utf-8");
+  cliente.println("Cache-Control: no-store");
+  cliente.println("WWW-Authenticate: Basic realm=\"Gateway OTA\"");
+  cliente.println("Connection: close");
+  cliente.println();
+  cliente.println("<!DOCTYPE html><html lang='pt-br'><head><meta charset='UTF-8'>");
+  cliente.println("<meta name='viewport' content='width=device-width, initial-scale=1.0'>");
+  cliente.println("<title>Autenticacao OTA</title>");
+  enviarCSSDashboard(cliente);
+  cliente.println("</head><body><main class='wrap'>");
+  cliente.println("<header class='top'><div class='brand'><h1>Atualizacao OTA protegida</h1><p>Informe usuario e senha para acessar a atualizacao de firmware.</p></div><div class='pill'><span class='dot warn'></span>LOGIN NECESSARIO</div></header>");
+  cliente.println("<section class='card'><div class='alert warn'>A rota /ota exige autenticacao basica do navegador.</div><div class='actions' style='margin-top:12px'><a class='btn primary' href='/'>Voltar ao painel</a></div></section>");
+  cliente.println("</main></body></html>");
+}
+
+void enviarRespostaOTA(Client& cliente, bool sucesso, const String& titulo, const String& mensagem, bool reiniciar) {
+  cliente.println("HTTP/1.1 200 OK");
+  cliente.println("Content-Type: text/html; charset=utf-8");
+  cliente.println("Cache-Control: no-store");
+  cliente.println("Connection: close");
+  cliente.println();
+  cliente.println("<!DOCTYPE html><html lang='pt-br'><head><meta charset='UTF-8'>");
+  cliente.println("<meta name='viewport' content='width=device-width, initial-scale=1.0'>");
+
+  if (reiniciar) {
+    cliente.println("<meta http-equiv='refresh' content='12; url=/'>");
+  }
+
+  cliente.print("<title>");
+  cliente.print(titulo);
+  cliente.println("</title>");
+  enviarCSSDashboard(cliente);
+  cliente.println("</head><body><main class='wrap'>");
+  cliente.println("<header class='top'><div class='brand'>");
+  cliente.print("<h1>");
+  cliente.print(titulo);
+  cliente.println("</h1>");
+  cliente.print("<p>");
+  cliente.print(mensagem);
+  cliente.println("</p></div>");
+
+  cliente.print("<div class='pill'><span class='dot ");
+  cliente.print(sucesso ? "ok" : "erro");
+  cliente.print("'></span>");
+  cliente.print(sucesso ? "SUCESSO" : "ERRO");
+  cliente.println("</div></header>");
+
+  cliente.print("<section class='card'><div class='alert ");
+  cliente.print(sucesso ? "ok" : "err");
+  cliente.print("'>");
+  cliente.print(mensagem);
+  cliente.println("</div>");
+
+  if (reiniciar) {
+    cliente.println("<div class='sub'>O ESP32 sera reiniciado automaticamente para iniciar o novo firmware. Aguarde alguns segundos e acesse o painel novamente.</div>");
+  }
+
+  cliente.println("<div class='actions' style='margin-top:14px'><a class='btn primary' href='/'>Voltar ao painel</a><a class='btn' href='/ota'>Nova atualizacao</a></div></section>");
+  cliente.println("</main></body></html>");
+}
+
+void enviarPaginaOTA(Client& cliente) {
+  enviarCabecalhoHTML(cliente);
+
+  String classeOTA = otaEmAndamento ? "warn" : (otaUltimoSucesso ? "ok" : "warn");
+  String textoOTA = otaEmAndamento ? "OTA EM ANDAMENTO" : "PRONTO PARA ATUALIZAR";
+
+  cliente.println("<!DOCTYPE html><html lang='pt-br'><head><meta charset='UTF-8'>");
+  cliente.println("<meta name='viewport' content='width=device-width, initial-scale=1.0'>");
+  cliente.println("<title>Atualizacao OTA - Gateway Ambiental ESP32</title>");
+  enviarCSSDashboard(cliente);
+  cliente.println("</head><body><main class='wrap'>");
+
+  cliente.println("<header class='top'>");
+  cliente.println("<div class='brand'><h1>Atualizacao OTA</h1><p>Envie um novo firmware .bin pela rede, sem cabo USB</p></div>");
+  cliente.print("<div class='pill'><span class='dot ");
+  cliente.print(classeOTA);
+  cliente.print("'></span>");
+  cliente.print(textoOTA);
+  cliente.println("</div></header>");
+
+  cliente.println("<section class='grid'>");
+
+  cliente.println("<div class='card'><h2>Firmware</h2><table class='table'>");
+  cliente.print("<tr><td>Versao atual</td><td>");
+  cliente.print(VERSAO_FIRMWARE);
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Chip</td><td>ESP32</td></tr>");
+  cliente.print("<tr><td>Flash livre p/ OTA</td><td>");
+  cliente.print(ESP.getFreeSketchSpace());
+  cliente.println(" bytes</td></tr>");
+  cliente.println("</table></div>");
+
+  cliente.println("<div class='card'><h2>Seguranca</h2><table class='table'>");
+  cliente.print("<tr><td>Autenticacao</td><td class='okText'>Ativa</td></tr>");
+  cliente.print("<tr><td>Usuario</td><td>");
+  cliente.print(OTA_USUARIO);
+  cliente.println("</td></tr>");
+  cliente.println("<tr><td>Senha</td><td>Definida no firmware</td></tr>");
+  cliente.println("</table></div>");
+
+  cliente.println("<div class='card'><h2>Watchdog</h2><table class='table'>");
+  cliente.print("<tr><td>Status</td><td class='");
+  cliente.print(watchdogAtivo ? "okText" : "errText");
+  cliente.print("'>");
+  cliente.print(watchdogAtivo ? "Ativo" : "Inativo");
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Protecao durante OTA</td><td class='okText'>Ativa</td></tr>");
+  cliente.print("<tr><td>OTA em andamento</td><td>");
+  cliente.print(otaEmAndamento ? "Sim" : "Nao");
+  cliente.println("</td></tr>");
+  cliente.println("</table></div>");
+
+  cliente.println("</section>");
+
+  cliente.println("<div class='section'><div><h2>Enviar novo firmware</h2><span>Use o arquivo .bin gerado pela Arduino IDE</span></div></div>");
+  cliente.println("<section class='card'>");
+  cliente.println("<form method='POST' action='/ota' enctype='multipart/form-data'>");
+  cliente.println("<div class='formRow'><label><b>Arquivo de firmware</b></label><input class='inputFile' type='file' name='firmware' accept='.bin' required></div>");
+  cliente.println("<button class='btn danger' type='submit'>Enviar firmware e atualizar</button>");
+  cliente.println("</form>");
+  cliente.println("<div class='alert warn'><b>Importante:</b> nao desligue o ESP32 durante o envio. Use um esquema de particao com suporte a OTA na Arduino IDE.</div>");
+  cliente.println("</section>");
+
+  cliente.println("<div class='section'><div><h2>Ultimo resultado OTA</h2><span>Historico da ultima tentativa nesta energizacao</span></div></div>");
+  cliente.println("<section class='card'><table class='table'>");
+  cliente.print("<tr><td>Status</td><td class='");
+  cliente.print(otaUltimoSucesso ? "okText" : "warnText");
+  cliente.print("'>");
+  cliente.print(otaUltimoSucesso ? "Sucesso" : "Sem sucesso registrado");
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Mensagem</td><td>");
+  cliente.print(otaUltimaMensagem);
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Quando</td><td>");
+  cliente.print(tempoUltimaOTA());
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Bytes recebidos</td><td>");
+  cliente.print(otaBytesRecebidos);
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Tamanho esperado</td><td>");
+  cliente.print(otaTamanhoEsperado);
+  cliente.println("</td></tr>");
+  cliente.println("</table></section>");
+
+  cliente.println("<section class='card'><div class='actions'><a class='btn primary' href='/'>Voltar ao painel</a><a class='btn' href='/tecnico'>Painel tecnico</a><a class='btn' href='/status'>Status JSON</a></div><div class='sub'>Rota protegida por autenticacao basica. A atualizacao reinicia o ESP32 automaticamente apos sucesso.</div></section>");
+  cliente.println("<p class='footer'>Gateway Ambiental ESP32 | OTA | Firmware ");
+  cliente.print(VERSAO_FIRMWARE);
+  cliente.println("</p>");
+  cliente.println("</main></body></html>");
+}
+
+void processarUploadOTA(Client& cliente, const String& requisicao) {
+  if (!requisicaoOTAAutorizada(requisicao)) {
+    enviarNaoAutorizadoOTA(cliente);
+    return;
+  }
+
+  int contentLength = obterContentLength(requisicao);
+  String boundary = obterBoundaryMultipart(requisicao);
+
+  if (contentLength <= 0 || boundary.length() == 0) {
+    atualizarStatusOTA("Requisicao OTA invalida: Content-Length ou boundary ausente.", false);
+    enviarRespostaOTA(cliente, false, "Falha na atualizacao OTA", otaUltimaMensagem, false);
+    return;
+  }
+
+  otaEmAndamento = true;
+  otaUltimoSucesso = false;
+  otaBytesRecebidos = 0;
+  otaTamanhoEsperado = 0;
+  atualizarStatusOTA("Recebendo firmware OTA...", false);
+  atualizarHeartbeat(TAREFA_WEB);
+
+  Serial.println();
+  Serial.println("====================================");
+  Serial.println("INICIANDO ATUALIZACAO OTA");
+  Serial.println("====================================");
+  Serial.print("Content-Length: ");
+  Serial.println(contentLength);
+  Serial.print("Boundary: ");
+  Serial.println(boundary);
+
+  int bytesLidos = 0;
+  bool encontrouArquivo = false;
+  bool fimCabecalhoArquivo = false;
+
+  while (bytesLidos < contentLength) {
+    String linha = lerLinhaCorpoHTTP(cliente, bytesLidos, contentLength, 8000);
+
+    if (linha.length() == 0) {
+      otaEmAndamento = false;
+      atualizarStatusOTA("Timeout lendo cabecalho multipart do firmware.", false);
+      enviarRespostaOTA(cliente, false, "Falha na atualizacao OTA", otaUltimaMensagem, false);
+      return;
+    }
+
+    if (linha.indexOf("filename=") >= 0) {
+      encontrouArquivo = true;
+    }
+
+    if (encontrouArquivo && (linha == "\r\n" || linha == "\n")) {
+      fimCabecalhoArquivo = true;
+      break;
+    }
+  }
+
+  if (!encontrouArquivo || !fimCabecalhoArquivo) {
+    otaEmAndamento = false;
+    atualizarStatusOTA("Arquivo .bin nao encontrado no formulario OTA.", false);
+    enviarRespostaOTA(cliente, false, "Falha na atualizacao OTA", otaUltimaMensagem, false);
+    return;
+  }
+
+  String rodapeMultipart = "\r\n--" + boundary + "--\r\n";
+  int tamanhoRodape = rodapeMultipart.length();
+
+  int tamanhoFirmware = contentLength - bytesLidos - tamanhoRodape;
+
+  if (tamanhoFirmware <= 0) {
+    otaEmAndamento = false;
+    atualizarStatusOTA("Tamanho do firmware invalido. Verifique se o arquivo .bin foi selecionado.", false);
+    enviarRespostaOTA(cliente, false, "Falha na atualizacao OTA", otaUltimaMensagem, false);
+    return;
+  }
+
+  otaTamanhoEsperado = tamanhoFirmware;
+
+  Serial.print("Tamanho estimado do firmware: ");
+  Serial.print(tamanhoFirmware);
+  Serial.println(" bytes");
+
+  if (!Update.begin(tamanhoFirmware, U_FLASH)) {
+    otaEmAndamento = false;
+    atualizarStatusOTA("Falha ao iniciar gravacao OTA. Verifique o esquema de particao com suporte a OTA.", false);
+    Serial.println("Falha ao iniciar Update.begin().");
+    Update.printError(Serial);
+    enviarRespostaOTA(cliente, false, "Falha na atualizacao OTA", otaUltimaMensagem, false);
+    return;
+  }
+
+  uint8_t buffer[1024];
+  int restantes = tamanhoFirmware;
+  unsigned long ultimoDado = millis();
+
+  while (restantes > 0) {
+    int disponivel = cliente.available();
+
+    if (disponivel <= 0) {
+      if (millis() - ultimoDado > 10000) {
+        Update.abort();
+        otaEmAndamento = false;
+        atualizarStatusOTA("Timeout recebendo firmware OTA.", false);
+        enviarRespostaOTA(cliente, false, "Falha na atualizacao OTA", otaUltimaMensagem, false);
+        return;
+      }
+
+      atualizarHeartbeat(TAREFA_WEB);
+      vTaskDelay(pdMS_TO_TICKS(1));
+      continue;
+    }
+
+    ultimoDado = millis();
+
+    int paraLer = disponivel;
+
+    if (paraLer > (int)sizeof(buffer)) {
+      paraLer = sizeof(buffer);
+    }
+
+    if (paraLer > restantes) {
+      paraLer = restantes;
+    }
+
+    int lidos = cliente.read(buffer, paraLer);
+
+    if (lidos <= 0) {
+      continue;
+    }
+
+    size_t escritos = Update.write(buffer, lidos);
+
+    if (escritos != (size_t)lidos) {
+      Update.abort();
+      otaEmAndamento = false;
+      atualizarStatusOTA("Falha ao gravar bloco do firmware na flash.", false);
+      Serial.println("Falha durante Update.write().");
+      Update.printError(Serial);
+      enviarRespostaOTA(cliente, false, "Falha na atualizacao OTA", otaUltimaMensagem, false);
+      return;
+    }
+
+    otaBytesRecebidos += escritos;
+    bytesLidos += lidos;
+    restantes -= lidos;
+
+    atualizarHeartbeat(TAREFA_WEB);
+
+    if (otaBytesRecebidos % 32768 == 0) {
+      Serial.print("OTA recebido: ");
+      Serial.print(otaBytesRecebidos);
+      Serial.print("/");
+      Serial.println(otaTamanhoEsperado);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+
+  int bytesRestantesMultipart = contentLength - bytesLidos;
+
+  if (bytesRestantesMultipart > 0) {
+    descartarBytesHTTP(cliente, bytesRestantesMultipart, bytesLidos, contentLength);
+  }
+
+  if (!Update.end(true)) {
+    otaEmAndamento = false;
+    atualizarStatusOTA("Firmware recebido, mas a finalizacao OTA falhou.", false);
+    Serial.println("Falha durante Update.end().");
+    Update.printError(Serial);
+    enviarRespostaOTA(cliente, false, "Falha na atualizacao OTA", otaUltimaMensagem, false);
+    return;
+  }
+
+  if (!Update.isFinished()) {
+    otaEmAndamento = false;
+    atualizarStatusOTA("OTA incompleta. O firmware nao foi totalmente gravado.", false);
+    enviarRespostaOTA(cliente, false, "Falha na atualizacao OTA", otaUltimaMensagem, false);
+    return;
+  }
+
+  otaEmAndamento = false;
+  atualizarStatusOTA("Firmware OTA gravado com sucesso. Reiniciando o ESP32.", true);
+
+  Serial.println("OTA concluida com sucesso. Reiniciando...");
+  enviarRespostaOTA(cliente, true, "Atualizacao OTA concluida", otaUltimaMensagem, true);
+
+  delay(1200);
+  ESP.restart();
 }
 
 void enviarPaginaPrincipal(Client& cliente) {
@@ -772,12 +1290,13 @@ void enviarPaginaPrincipal(Client& cliente) {
   cliente.println("<a class='btn primary' href='/'>Atualizar painel</a>");
   cliente.println("<a class='btn' href='/config'>Configuracoes</a>");
   cliente.println("<a class='btn' href='/tecnico'>Painel tecnico</a>");
+  cliente.println("<a class='btn danger' href='/ota'>Atualizacao OTA</a>");
   cliente.println("<a class='btn' href='/status'>Status JSON</a>");
   cliente.println("</div>");
   cliente.println("<div class='sub'>Interface local embarcada no ESP32. Nao depende de internet externa.</div>");
   cliente.println("</section>");
 
-  cliente.println("<p class='footer'>Gateway Ambiental ESP32 | Ethernet W5500 | Wi-Fi reserva | MQTT | microSD | Watchdog</p>");
+  cliente.println("<p class='footer'>Gateway Ambiental ESP32 | Ethernet W5500 | Wi-Fi reserva | MQTT | microSD | Watchdog | FreeRTOS | OTA</p>");
   cliente.println("</main></body></html>");
 }
 
@@ -821,7 +1340,7 @@ void enviarPaginaConfig(Client& cliente) {
   cliente.println("</table></div>");
   cliente.println("</section>");
 
-  cliente.println("<section class='card'><div class='actions'><a class='btn primary' href='/'>Voltar ao painel</a><a class='btn' href='/tecnico'>Painel tecnico</a><a class='btn' href='/status'>Ver JSON</a></div><div class='sub'>Nesta versao, a pagina e apenas informativa. Em uma etapa futura, ela pode salvar configuracoes no microSD.</div></section>");
+  cliente.println("<section class='card'><div class='actions'><a class='btn primary' href='/'>Voltar ao painel</a><a class='btn' href='/tecnico'>Painel tecnico</a><a class='btn danger' href='/ota'>Atualizacao OTA</a><a class='btn' href='/status'>Ver JSON</a></div><div class='sub'>Nesta versao, a pagina e apenas informativa. Em uma etapa futura, ela pode salvar configuracoes no microSD.</div></section>");
   cliente.println("</main></body></html>");
 }
 
@@ -1071,6 +1590,25 @@ void enviarPaginaTecnica(Client& cliente) {
   cliente.println("</td></tr>");
   cliente.println("</table></div>");
 
+  cliente.println("<div class='card'><h2>Atualizacao OTA</h2><table class='table'>");
+  cliente.print("<tr><td>Firmware</td><td>");
+  cliente.print(VERSAO_FIRMWARE);
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Status</td><td class='");
+  cliente.print(otaEmAndamento ? "warnText" : "okText");
+  cliente.print("'>");
+  cliente.print(otaEmAndamento ? "Em andamento" : "Disponivel");
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Ultimo resultado</td><td class='");
+  cliente.print(otaUltimoSucesso ? "okText" : "warnText");
+  cliente.print("'>");
+  cliente.print(otaUltimoSucesso ? "Sucesso" : "Sem sucesso registrado");
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Ultima mensagem</td><td>");
+  cliente.print(otaUltimaMensagem);
+  cliente.println("</td></tr>");
+  cliente.println("</table></div>");
+
   cliente.println("</section>");
 
   cliente.println("<div class='section'><div><h2>Tarefas FreeRTOS</h2><span>Status, core, prioridade, stack e heartbeat</span></div></div>");
@@ -1127,7 +1665,7 @@ void enviarPaginaTecnica(Client& cliente) {
 
   cliente.println("</section>");
 
-  cliente.println("<section class='card'><div class='actions'><a class='btn primary' href='/'>Voltar ao painel</a><a class='btn' href='/config'>Configuracoes</a><a class='btn' href='/status'>Status JSON</a></div><div class='sub'>Painel tecnico somente leitura para diagnostico local do firmware.</div></section>");
+  cliente.println("<section class='card'><div class='actions'><a class='btn primary' href='/'>Voltar ao painel</a><a class='btn' href='/config'>Configuracoes</a><a class='btn danger' href='/ota'>Atualizacao OTA</a><a class='btn' href='/status'>Status JSON</a></div><div class='sub'>Painel tecnico somente leitura para diagnostico local do firmware.</div></section>");
   cliente.println("<p class='footer'>Gateway Ambiental ESP32 | FreeRTOS | Watchdog | Diagnostico tecnico</p>");
   cliente.println("</main></body></html>");
 }
@@ -1139,6 +1677,18 @@ void enviarStatusJSON(Client& cliente) {
   cliente.print("\"sistema\":\"");
   cliente.print(sistemaOnline() ? "online" : "offline");
   cliente.print("\",");
+
+  cliente.print("\"firmware\":\"");
+  cliente.print(VERSAO_FIRMWARE);
+  cliente.print("\",");
+
+  cliente.print("\"ota_em_andamento\":");
+  cliente.print(otaEmAndamento ? "true" : "false");
+  cliente.print(",");
+
+  cliente.print("\"ota_ultimo_sucesso\":");
+  cliente.print(otaUltimoSucesso ? "true" : "false");
+  cliente.print(",");
 
   cliente.print("\"conexao_atual\":\"");
   cliente.print(nomeConexao(conexaoAtual));
@@ -1233,7 +1783,15 @@ void atenderClienteWeb(Client& cliente) {
     }
   }
 
-  if (requisicao.indexOf("GET /config") >= 0) {
+  if (requisicao.indexOf("POST /ota") >= 0) {
+    processarUploadOTA(cliente, requisicao);
+  } else if (requisicao.indexOf("GET /ota") >= 0) {
+    if (requisicaoOTAAutorizada(requisicao)) {
+      enviarPaginaOTA(cliente);
+    } else {
+      enviarNaoAutorizadoOTA(cliente);
+    }
+  } else if (requisicao.indexOf("GET /config") >= 0) {
     enviarPaginaConfig(cliente);
   } else if (requisicao.indexOf("GET /tecnico") >= 0 || requisicao.indexOf("GET /tasks") >= 0) {
     enviarPaginaTecnica(cliente);
@@ -1264,7 +1822,7 @@ void iniciarPaginaWeb() {
     Serial.println(ipParaTexto(WiFi.localIP()));
   }
 
-  Serial.println("Rotas: /  |  /config  |  /tecnico  |  /tasks  |  /status");
+  Serial.println("Rotas: /  |  /config  |  /tecnico  |  /tasks  |  /ota  |  /status");
 }
 
 void executarPaginaWeb() {
@@ -1402,10 +1960,6 @@ bool salvarPendenteMQTT(const char* json) {
 // INICIALIZACAO DA ETHERNET
 // ==================================================
 
-// Esta funcao usa a mesma logica do teste isolado que funcionou:
-// reset fisico do W5500 -> SPI.begin -> Ethernet.init -> Ethernet.begin(mac)
-// Evitamos bloquear o projeto com Ethernet.hardwareStatus(), pois no seu modulo
-// esse teste retornou falso antes da inicializacao DHCP funcionar corretamente.
 
 bool tentarObterIPEthernet() {
   prepararSPIParaEthernet();
@@ -1485,10 +2039,6 @@ void iniciarEthernet() {
 
 bool ethernetDisponivel() {
   prepararSPIParaEthernet();
-
-  // Nao usamos Ethernet.hardwareStatus() aqui porque ele retornou
-  // "nao encontrado" no seu teste anterior, mesmo com o W5500 funcionando.
-  // A verificacao pratica sera: cabo/link + IP valido por DHCP.
 
   if (Ethernet.linkStatus() == LinkOFF) {
     if (ethernetComIP) {
@@ -2135,6 +2685,12 @@ bool validarLinhaUART(const char* linha, DadosAmbientais& novaLeitura) {
 }
 
 bool tarefasEssenciaisOK() {
+  if (otaEmAndamento) {
+    // Durante o upload OTA, a tarefa WEB pode ficar ocupada recebendo e gravando o firmware.
+    // Nesse periodo, o MONITOR continua alimentando o watchdog para evitar reset no meio da atualizacao.
+    return true;
+  }
+
   unsigned long agora = millis();
 
   for (uint8_t i = 0; i < TOTAL_TAREFAS_SISTEMA; i++) {
@@ -2494,8 +3050,10 @@ void setup() {
   Serial.println();
   Serial.println("====================================");
   Serial.println("GATEWAY AMBIENTAL ESP32");
-  Serial.println("UART + W5500 + Wi-Fi reserva + MQTT + microSD + Watchdog + FreeRTOS");
-  Serial.println("Arquitetura: UART -> Validador -> MQTT/microSD/Web");
+  Serial.println("UART + W5500 + Wi-Fi reserva + MQTT + microSD + Watchdog + FreeRTOS + OTA");
+  Serial.print("Firmware: ");
+  Serial.println(VERSAO_FIRMWARE);
+  Serial.println("Arquitetura: UART -> Validador -> MQTT/microSD/Web/OTA");
   Serial.println("====================================");
 
   atualizarDiagnosticoReset();
@@ -2547,7 +3105,5 @@ void setup() {
 // ==================================================
 
 void loop() {
-  // O loop principal fica livre.
-  // As funcoes do gateway agora rodam nas tarefas FreeRTOS.
   vTaskDelay(pdMS_TO_TICKS(1000));
 }
