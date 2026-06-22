@@ -1,8 +1,25 @@
-# Gateway de Monitoramento Ambiental com Arduino e ESP32
+# Gateway Ambiental ESP32 + Arduino
 
-Projeto de um sistema embarcado para monitoramento ambiental utilizando um **Arduino Uno** para realizar a leitura dos sensores e um **ESP32** para funcionar como gateway de comunicação.
+<img width="1600" height="900" alt="d56c7bdc-d202-4535-9688-38fe051ee091" src="https://github.com/user-attachments/assets/9c6309a2-b1e6-4c1f-bde6-447aef6ead60" />
 
-O Arduino coleta os dados ambientais e envia as informações para o ESP32 por comunicação UART. O ESP32 recebe e valida os dados, conecta-se à rede Ethernet por meio do módulo W5500, utiliza Wi-Fi como conexão reserva, publica as leituras em um broker MQTT e também grava as leituras localmente em um cartão microSD. Caso o broker MQTT esteja indisponível, o ESP32 salva os pacotes como pendentes no microSD e realiza o reenvio automático quando a conexão MQTT volta a funcionar. O gateway também disponibiliza uma página web local com dashboard de diagnóstico, estados das conexões, últimas leituras, uptime, contadores e rota de configuração inicial. No computador, o Mosquitto recebe as mensagens MQTT e o Node-RED exibe os dados em dashboard, registra leituras em CSV e armazena o histórico em banco de dados SQLite.
+
+## Status do projeto
+
+**Projeto concluído.**
+
+Este repositório documenta um gateway ambiental IoT completo, desenvolvido com **Arduino Uno**, **ESP32**, **Ethernet W5500**, **Wi-Fi reserva**, **MQTT**, **Node-RED**, **SQLite**, **microSD**, **Watchdog**, **FreeRTOS**, **página web local** e **atualização OTA**.
+
+O sistema foi projetado para simular uma solução real de monitoramento ambiental, com aquisição de dados, comunicação entre microcontroladores, envio para broker MQTT, visualização em dashboard, armazenamento local e remoto, tolerância a falhas, supervisão técnica e atualização remota de firmware.
+
+---
+
+## Visão geral
+
+O projeto utiliza um **Arduino Uno** como unidade de aquisição de dados dos sensores. O Arduino realiza as leituras ambientais e envia um pacote estruturado para o **ESP32 Gateway** via **UART**.
+
+O **ESP32** recebe, valida e processa os dados. Em seguida, publica as leituras no broker **MQTT Mosquitto**, registra histórico no **microSD**, mantém uma fila offline de pacotes pendentes, disponibiliza uma **página web local** de monitoramento, executa tarefas separadas com **FreeRTOS**, utiliza **watchdog** para aumentar a confiabilidade e permite atualização remota do firmware por **OTA**.
+
+No computador, o **Node-RED** recebe os dados MQTT, exibe gráficos e indicadores, gera alertas, salva registros em CSV e armazena o histórico em banco **SQLite**.
 
 ---
 
@@ -10,36 +27,51 @@ O Arduino coleta os dados ambientais e envia as informações para o ESP32 por c
 
 Desenvolver um gateway ambiental capaz de:
 
-* Ler a temperatura do ambiente;
-* Ler a umidade do ar;
-* Ler a umidade do solo;
-* Medir a luminosidade;
-* Detectar chuva;
-* Enviar os dados do Arduino para o ESP32;
-* Validar os pacotes recebidos via UART;
-* Conectar o ESP32 à rede Ethernet usando W5500;
-* Publicar os dados utilizando MQTT;
-* Visualizar os dados em tempo real no Node-RED;
-* Gerar gráficos, medidores e alertas no dashboard;
-* Registrar as leituras em arquivo CSV;
-* Armazenar o histórico em banco SQLite;
-* Armazenar as leituras localmente no microSD do ESP32;
-* Salvar pacotes pendentes no microSD quando o MQTT falhar;
-* Reenviar automaticamente os pacotes pendentes quando o MQTT voltar;
+* Ler temperatura, umidade do ar, umidade do solo, luminosidade e chuva;
+* Enviar dados do Arduino para o ESP32 por UART;
+* Validar pacotes recebidos no ESP32;
+* Conectar o ESP32 pela Ethernet usando W5500;
 * Utilizar Wi-Fi como conexão reserva;
-* Disponibilizar uma página web local de monitoramento e diagnóstico;
-* Futuramente implementar watchdog, FreeRTOS e OTA.
+* Publicar leituras por MQTT;
+* Exibir dados no MQTT Explorer e no Node-RED;
+* Registrar leituras em CSV;
+* Armazenar histórico em SQLite;
+* Gravar histórico local no microSD;
+* Salvar pacotes pendentes quando o MQTT estiver indisponível;
+* Reenviar automaticamente os pacotes pendentes após reconexão;
+* Disponibilizar página web local de monitoramento;
+* Disponibilizar painel técnico com diagnóstico interno;
+* Executar o firmware organizado em tarefas FreeRTOS;
+* Monitorar o sistema com watchdog;
+* Permitir atualização OTA pela página web.
 
 ---
 
 ## Arquitetura do sistema
 
+Fluxo principal do projeto:
+
 ```text
-Sensores
+Sensores → Arduino Uno → UART → ESP32 Gateway → Ethernet/Wi-Fi → MQTT → Node-RED → SQLite
+                                      │
+                                      ├── microSD
+                                      │     ├── Histórico local
+                                      │     └── Pacotes MQTT pendentes
+                                      │
+                                      ├── Página web local
+                                      ├── Painel técnico
+                                      ├── Watchdog
+                                      ├── FreeRTOS
+                                      └── OTA
+```
+
+Arquitetura lógica:
+
+```text
+Sensores ambientais
    │
    ▼
 Arduino Uno
-   │
    │ UART
    ▼
 ESP32 Gateway
@@ -48,133 +80,65 @@ ESP32 Gateway
    ├── Wi-Fi reserva
    ├── MQTT
    ├── microSD
-   │     ├── Histórico local
-   │     └── Pacotes pendentes
-   ├── Página web local
-   └── Publicação dos dados
+   ├── Web Server
+   ├── OTA
+   ├── Watchdog
+   └── FreeRTOS
           │
           ▼
 Computador
-   │
    ├── Mosquitto
    ├── MQTT Explorer
    ├── Node-RED Dashboard
    ├── Arquivo CSV
-   └── Banco SQLite
-```
-
-Fluxo principal do sistema:
-
-```text
-Sensores → Arduino Uno → UART → ESP32 → Ethernet W5500/Wi-Fi → MQTT → Node-RED → SQLite
-                              ├── microSD → histórico local e pendentes MQTT
-                              └── Página web → dashboard local do gateway
+   └── SQLite
 ```
 
 ---
 
 ## Componentes utilizados
 
-* 1 Arduino Uno;
-* 1 ESP32;
-* 1 módulo Ethernet W5500;
-* 1 módulo leitor de cartão microSD;
-* 1 cartão microSD;
-* 1 sensor DHT11;
-* 1 sensor de umidade do solo;
-* 1 LDR;
-* 1 sensor de chuva;
+* Arduino Uno;
+* ESP32 DevKit;
+* Módulo Ethernet W5500;
+* Módulo leitor de cartão microSD;
+* Cartão microSD;
+* Sensor DHT11;
+* Sensor de umidade do solo;
+* LDR;
+* Sensor de chuva;
 * Resistores;
 * Protoboard;
 * Jumpers;
 * Cabo Ethernet;
-* Computador executando Mosquitto, MQTT Explorer e Node-RED.
-
-### Componentes planejados para as próximas etapas
-
-* LED ou buzzer para indicação de falhas críticas;
-* Fonte de alimentação independente;
-* Caixa para montagem do protótipo.
+* Computador com Mosquitto, MQTT Explorer, Node-RED e SQLite.
 
 ---
 
 ## Função do Arduino Uno
 
-O Arduino funciona como um dispositivo remoto de aquisição de dados.
+O Arduino funciona como unidade remota de aquisição de dados.
 
-Ele é responsável por:
+Responsabilidades:
 
 * Ler os sensores;
 * Organizar as leituras;
-* Criar um pacote de dados;
+* Criar o pacote ambiental;
 * Enviar o pacote para o ESP32 por UART.
 
-Exemplo de pacote enviado:
-
-```text
-DADOS,22.6,48.0,1023,462,374
-```
-
-Ordem dos dados:
+Formato do pacote enviado:
 
 ```text
 DADOS,TEMPERATURA,UMIDADE_AR,UMIDADE_SOLO,LUMINOSIDADE,CHUVA
 ```
 
----
-
-## Função do ESP32
-
-O ESP32 funciona como o gateway do sistema.
-
-Ele é responsável por:
-
-* Receber os dados enviados pelo Arduino;
-* Verificar se o pacote recebido é válido;
-* Separar os valores recebidos;
-* Conectar-se à rede Ethernet pelo W5500;
-* Conectar-se ao broker MQTT;
-* Publicar os dados dos sensores em tópicos MQTT;
-* Publicar também um pacote completo em formato de objeto para o Node-RED;
-* Armazenar o histórico das leituras no cartão microSD;
-* Salvar pacotes pendentes no microSD quando o MQTT estiver indisponível;
-* Reenviar automaticamente os pacotes pendentes quando o MQTT voltar;
-* Utilizar Wi-Fi como conexão reserva quando a Ethernet não estiver disponível;
-* Disponibilizar uma página web local com dashboard de monitoramento;
-* Disponibilizar rota `/status` em JSON para diagnóstico e integração futura;
-* Disponibilizar rota `/config` como base para configurações futuras.
-
----
-
-## Comunicação UART
-
-A comunicação entre o Arduino e o ESP32 é realizada utilizando UART.
-
-### Ligações
-
-| Arduino Uno | ESP32 | Função |
-| ----------- | ----- | ------ |
-| TX | RX2 | Envio dos dados |
-| GND | GND | Referência elétrica comum |
-
-A velocidade utilizada na comunicação é:
+Exemplo:
 
 ```text
-9600 baud
+DADOS,22.6,48.0,1023,462,374
 ```
 
-> O TX do Arduino trabalha com nível lógico próximo de 5 V, enquanto o ESP32 utiliza 3,3 V. É recomendado utilizar um divisor resistivo ou conversor de nível lógico entre o TX do Arduino e o RX do ESP32.
-
-Fluxo da comunicação:
-
-```text
-Arduino TX ─────► ESP32 RX2
-Arduino GND ──── ESP32 GND
-```
-
----
-
-## Sensores conectados ao Arduino
+Sensores conectados ao Arduino:
 
 | Sensor | Pino do Arduino |
 | ------ | --------------- |
@@ -185,9 +149,53 @@ Arduino GND ──── ESP32 GND
 
 ---
 
-## Conexão do W5500 com o ESP32
+## Função do ESP32 Gateway
 
-O módulo W5500 utiliza comunicação SPI.
+O ESP32 é o núcleo de comunicação, armazenamento, supervisão e integração do sistema.
+
+Responsabilidades:
+
+* Receber dados do Arduino via UART;
+* Validar o pacote recebido;
+* Separar e converter os valores;
+* Conectar à rede Ethernet pelo W5500;
+* Usar Wi-Fi como conexão reserva;
+* Publicar dados no MQTT;
+* Registrar leituras no microSD;
+* Armazenar pacotes pendentes quando o MQTT falhar;
+* Reenviar pendentes quando o MQTT voltar;
+* Executar servidor web local;
+* Disponibilizar rotas de monitoramento e configuração;
+* Exibir painel técnico;
+* Executar tarefas FreeRTOS;
+* Alimentar o watchdog;
+* Permitir atualização OTA.
+
+---
+
+## Comunicação UART
+
+A comunicação entre Arduino e ESP32 é feita por UART em **9600 baud**.
+
+| Arduino Uno | ESP32 | Função |
+| ----------- | ----- | ------ |
+| TX | RX2 | Envio dos dados |
+| GND | GND | Referência elétrica comum |
+
+Fluxo:
+
+```text
+Arduino TX ─────► ESP32 RX2
+Arduino GND ──── ESP32 GND
+```
+
+> O Arduino Uno trabalha com nível lógico de 5 V e o ESP32 trabalha com 3,3 V. É recomendado usar divisor resistivo ou conversor de nível lógico entre o TX do Arduino e o RX do ESP32.
+
+---
+
+## Ethernet W5500
+
+O módulo W5500 é a interface principal de rede do gateway.
 
 | W5500 | ESP32 |
 | ----- | ----- |
@@ -199,33 +207,43 @@ O módulo W5500 utiliza comunicação SPI.
 | GND | GND |
 | VCC | Alimentação compatível com o módulo |
 
-Após a conexão, o ESP32 solicita automaticamente um endereço IP utilizando DHCP.
-
-Exemplo de funcionamento:
+Exemplo de operação:
 
 ```text
 Obtendo endereço IP por DHCP...
-IP do ESP32: 192.168.100.103
+IP do ESP32: 192.168.100.102
 Gateway: 192.168.100.1
-Máscara: 255.255.255.0
-IP do broker MQTT: 192.168.100.17
+Broker MQTT: 192.168.100.17:1883
 ```
 
 ---
 
-## Protocolo MQTT
+## Wi-Fi reserva
 
-O protocolo MQTT é utilizado para enviar as leituras do gateway para o computador.
+A Ethernet é a conexão principal. O Wi-Fi atua como conexão de reserva para manter o gateway operando caso a rede cabeada esteja indisponível.
 
-O computador executa o broker **Mosquitto** e o ESP32 funciona como cliente MQTT.
-
-### Porta utilizada
+Ordem de prioridade:
 
 ```text
-1883
+1. Ethernet
+2. Wi-Fi reserva
+3. microSD com fila de pendentes
 ```
 
-### Tópicos MQTT utilizados
+---
+
+## MQTT
+
+O MQTT é utilizado para enviar as leituras ambientais do ESP32 para o computador.
+
+Broker utilizado:
+
+```text
+Mosquitto
+Porta: 1883
+```
+
+Tópicos utilizados:
 
 ```text
 gateway/ambiental/temperatura
@@ -236,22 +254,12 @@ gateway/ambiental/chuva
 gateway/ambiental/dados
 ```
 
-Exemplo de publicação individual:
-
-```text
-gateway/ambiental/temperatura 22.6
-gateway/ambiental/umidade_ar 48.0
-gateway/ambiental/umidade_solo 1023
-gateway/ambiental/luminosidade 462
-gateway/ambiental/chuva 374
-```
-
-Exemplo de pacote completo utilizado pelo Node-RED para salvar no SQLite:
+Exemplo de pacote JSON:
 
 ```json
 {
   "temperatura": 23.4,
-  "umidade_ar": 46,
+  "umidade_ar": 46.0,
   "umidade_solo": 1023,
   "luminosidade": 740,
   "chuva": 1022
@@ -262,20 +270,20 @@ Exemplo de pacote completo utilizado pelo Node-RED para salvar no SQLite:
 
 ## Node-RED
 
-O Node-RED é utilizado para receber os dados MQTT e criar a parte visual do sistema.
+O Node-RED é a camada de integração e visualização do projeto.
 
-Funções já implementadas:
+Funções implementadas:
 
 * Recebimento dos tópicos MQTT;
-* Exibição dos valores em medidores;
+* Exibição dos valores em gauges;
 * Exibição dos valores em gráficos;
-* Exibição de textos no dashboard;
-* Geração de alertas;
-* Registro das leituras em arquivo CSV;
-* Registro das leituras em banco de dados SQLite;
-* Consulta das últimas leituras salvas no SQLite.
+* Textos de status;
+* Alertas ambientais;
+* Registro em CSV;
+* Registro em banco SQLite;
+* Consulta das últimas leituras salvas.
 
-Fluxo geral utilizado no Node-RED:
+Fluxo geral:
 
 ```text
 MQTT → Node-RED → Dashboard
@@ -287,7 +295,7 @@ MQTT → Node-RED → SQLite
 
 ## Banco de dados SQLite
 
-O banco de dados SQLite foi implementado no Node-RED para armazenar o histórico das leituras ambientais.
+O SQLite armazena o histórico das leituras ambientais recebidas pelo Node-RED.
 
 Arquivo utilizado:
 
@@ -295,7 +303,7 @@ Arquivo utilizado:
 C:\gateway\gateway.db
 ```
 
-Tabela criada:
+Tabela:
 
 ```sql
 CREATE TABLE IF NOT EXISTS leituras (
@@ -309,27 +317,7 @@ CREATE TABLE IF NOT EXISTS leituras (
 );
 ```
 
-Fluxo de gravação:
-
-```text
-mqtt in Dados SQLite
-        ↓
-Salvar no SQLite
-        ↓
-sqlite gravar
-        ↓
-Confirmar gravação
-        ↓
-debug gravação
-```
-
-Tópico utilizado para gravação no banco:
-
-```text
-gateway/ambiental/dados
-```
-
-Consulta utilizada para visualizar as últimas leituras:
+Consulta das últimas leituras:
 
 ```sql
 SELECT *
@@ -338,25 +326,11 @@ ORDER BY id DESC
 LIMIT 10;
 ```
 
-Exemplo de registro salvo:
-
-```text
-ID: 1752
-Data/Hora: 2026-06-20 11:21:49
-Temperatura: 23.4 °C
-Umidade do ar: 46 %
-Umidade do solo: 1023
-Luminosidade: 716
-Chuva: 1022
-```
-
-> O arquivo `gateway.db` é um banco gerado em tempo de execução. Para o GitHub, o recomendado é versionar o fluxo do Node-RED e documentar o caminho do banco, mas não versionar o banco com os dados coletados.
-
 ---
 
-## Arquivo CSV
+## Registro em CSV
 
-Além do SQLite, o Node-RED também registra as leituras em arquivo CSV.
+Além do SQLite, o Node-RED salva as leituras em arquivo CSV.
 
 Caminho utilizado:
 
@@ -364,26 +338,19 @@ Caminho utilizado:
 C:\gateway\dados_gateway.csv
 ```
 
-Exemplo de linha gerada:
+Exemplo de linha:
 
 ```csv
 2026-06-20 10:30:00,23.4,46,1023,716,1022
 ```
 
-O CSV serve como registro simples e fácil de abrir em planilhas, enquanto o SQLite permite consultas históricas mais organizadas.
-
 ---
 
 ## microSD no ESP32
 
-O microSD foi implementado diretamente no ESP32 para permitir armazenamento local no próprio gateway.
+O cartão microSD permite armazenamento local no gateway.
 
-O cartão é utilizado para duas funções principais:
-
-* Registrar o histórico local das leituras;
-* Guardar pacotes MQTT pendentes quando o broker estiver desligado ou indisponível.
-
-Arquivos utilizados no microSD:
+Arquivos utilizados:
 
 ```text
 /dados_gateway.csv
@@ -396,110 +363,85 @@ Função de cada arquivo:
 | Arquivo | Função |
 | ------- | ------ |
 | `/dados_gateway.csv` | Histórico local das leituras recebidas via UART |
-| `/pendentes_mqtt.txt` | Pacotes JSON que não conseguiram ser publicados no MQTT |
-| `/pendentes_tmp.txt` | Arquivo temporário usado durante o reenvio dos pendentes |
+| `/pendentes_mqtt.txt` | Pacotes JSON não publicados no MQTT |
+| `/pendentes_tmp.txt` | Arquivo temporário usado durante o reenvio |
 
-Formato do CSV salvo no ESP32:
+Formato do CSV no ESP32:
 
 ```csv
 timestamp_ms,temperatura,umidade_ar,umidade_solo,luminosidade,chuva
 12500,21.40,41.00,1023,474,1022
 ```
 
-Exemplo de pacote pendente salvo no microSD:
+---
 
-```json
-{"temperatura":21.4,"umidade_ar":41.0,"umidade_solo":1023,"luminosidade":474,"chuva":1022}
-```
+## Armazenamento offline e reenvio MQTT
 
-Funcionamento da fila de pendentes:
+Quando o broker MQTT está indisponível, o ESP32 não perde a leitura. O pacote JSON é salvo no microSD como pendente.
 
-```text
-ESP32 tenta publicar no MQTT
-        │
-        ├── Publicou com sucesso
-        │       └── Mantém apenas o histórico no CSV
-        │
-        └── Falhou
-                └── Salva o JSON em /pendentes_mqtt.txt
-```
-
-Quando o MQTT volta a funcionar:
+Fluxo:
 
 ```text
-ESP32 reconecta ao Mosquitto
+ESP32 recebe pacote válido
         ↓
-Abre /pendentes_mqtt.txt
+Tenta publicar no MQTT
         ↓
-Reenvia os pacotes salvos
+Publicou?
+   ├── Sim → mantém histórico local
+   └── Não → salva em /pendentes_mqtt.txt
+```
+
+Quando o MQTT volta:
+
+```text
+ESP32 reconecta ao broker
+        ↓
+Lê /pendentes_mqtt.txt
+        ↓
+Reenvia pacotes pendentes
         ↓
 Remove os pacotes reenviados
         ↓
 Mantém apenas os que ainda falharem
 ```
 
-Teste realizado:
+Resultado de teste:
 
 ```text
-MQTT desconectado. Pacote nao publicado.
-Pacote salvo como pendente no microSD.
-```
-
-Depois que o Mosquitto voltou:
-
-```text
-Pendente reenviado:
-{"temperatura":21.4,"umidade_ar":41.0,"umidade_solo":1023,"luminosidade":474,"chuva":1022}
-
 Reenvio finalizado. Reenviados: 47 | Ainda pendentes: 0
-```
-
-Resultado da etapa:
-
-```text
-Backup offline funcionando
-Fila de pendentes funcionando
-Reenvio automático funcionando
-Nenhum pacote pendente restante após a reconexão
 ```
 
 ---
 
 ## Página web local do gateway
 
-O ESP32 disponibiliza uma página web local para monitoramento e diagnóstico do gateway.
+<img width="1270" height="792" alt="b863781e-f661-400e-9f91-5b91b267a667" src="https://github.com/user-attachments/assets/09445553-fc29-4292-95ae-993df09121fc" />
 
-A página pode ser acessada pelo navegador utilizando o endereço IP do ESP32 na rede.
 
-Exemplo:
+O ESP32 disponibiliza uma interface web local para monitoramento do sistema diretamente pelo navegador.
+
+Exemplo de acesso:
 
 ```text
-http://192.168.100.103
+http://192.168.100.102
 ```
 
 Rotas implementadas:
 
-```text
-/
-/config
-/status
-```
-
-Função de cada rota:
-
 | Rota | Função |
 | ---- | ------ |
 | `/` | Dashboard principal do gateway |
-| `/config` | Página base para configurações futuras |
-| `/status` | Retorno em JSON com informações do sistema |
+| `/config` | Página de configurações locais |
+| `/status` | Retorno JSON com informações do sistema |
+| `/tecnico` | Painel técnico do gateway |
+| `/ota` | Página de atualização OTA |
 
-Informações exibidas no dashboard:
+Informações exibidas no painel principal:
 
-* Estado da conexão Ethernet;
+* Estado da Ethernet;
 * Estado do Wi-Fi reserva;
-* Estado da conexão MQTT;
-* Endereço IP da Ethernet;
-* Endereço IP do Wi-Fi;
+* Estado do MQTT;
+* IP do ESP32;
 * Broker MQTT configurado;
 * Últimas leituras ambientais;
 * Temperatura;
@@ -507,503 +449,195 @@ Informações exibidas no dashboard:
 * Umidade do solo;
 * Luminosidade;
 * Chuva;
-* Tempo de funcionamento do ESP32;
-* Total de pacotes válidos recebidos;
-* Total de erros detectados;
-* Falhas MQTT consecutivas;
+* Uptime;
+* Pacotes válidos;
+* Erros detectados;
 * Estado do microSD;
+* Falhas MQTT;
 * Conexão em uso.
 
-O visual foi organizado em formato de dashboard industrial, com tema escuro, cards de status, cards de leitura e área de diagnóstico técnico.
+Características visuais:
 
-Objetivo da página web:
+* Tema escuro;
+* Aparência de dashboard industrial;
+* Cards de status;
+* Cards de leitura;
+* Área de diagnóstico;
+* Botões para atualização, configurações, JSON, painel técnico e OTA;
+* Interface embarcada no próprio ESP32.
+
+---
+
+## Watchdog
+
+<img width="1271" height="845" alt="image" src="https://github.com/user-attachments/assets/f306a74f-3a36-42f0-99c6-7e2c52aa387a" />
+
+
+O watchdog foi implementado para aumentar a robustez do gateway. Ele monitora a execução do sistema e reinicia o ESP32 caso o firmware deixe de responder corretamente.
+
+Funções implementadas:
+
+* Configuração do watchdog do ESP32;
+* Alimentação periódica por tarefa supervisora;
+* Monitoramento do funcionamento geral;
+* Exibição do status no painel técnico;
+* Contagem de resets por watchdog;
+* Indicação do último motivo de reset;
+* Proteção durante processos críticos, incluindo OTA.
+
+Informações exibidas no painel técnico:
+
+* Status do watchdog;
+* Timeout configurado;
+* Tarefa alimentadora;
+* Último reset;
+* Quantidade de resets por WDT;
+* Teste serial habilitado;
+* Estado das filas FreeRTOS;
+* Estado de comunicação;
+* Memória livre;
+* Heap mínimo;
+* Uptime;
+* Número de tarefas ativas.
+
+---
+
+## FreeRTOS
+
+<img width="1208" height="857" alt="image" src="https://github.com/user-attachments/assets/e814a21f-69e4-4bee-9dbf-e0c941d3ca33" />
+
+
+O projeto foi organizado em tarefas FreeRTOS para separar responsabilidades e aproximar o firmware de uma arquitetura profissional de sistemas embarcados.
+
+Tarefas implementadas:
+
+| Tarefa | Responsabilidade |
+| ------ | ---------------- |
+| UART | Receber dados do Arduino |
+| Validação | Validar e converter pacotes recebidos |
+| MQTT | Publicar dados e reenviar pendentes |
+| Rede | Verificar Ethernet e Wi-Fi |
+| microSD | Gravar histórico e pendentes |
+| Web Server | Manter a página web local |
+| Monitor | Supervisionar sistema e alimentar watchdog |
+
+Recursos utilizados:
+
+* Filas FreeRTOS para comunicação entre tarefas;
+* Mutex para proteger recursos compartilhados;
+* Separação entre recepção, validação, publicação e armazenamento;
+* Painel técnico para visualização das filas e estados internos.
+
+---
+
+## Atualização OTA
+
+<img width="1237" height="600" alt="image" src="https://github.com/user-attachments/assets/bd6a07d0-0ede-4506-9425-009e275b5196" />
+
+
+A atualização OTA permite atualizar o firmware do ESP32 pela rede, sem usar cabo USB após a primeira gravação.
+
+Funcionalidades implementadas:
+
+* Página `/ota`;
+* Upload de arquivo `.bin`;
+* Autenticação básica;
+* Exibição da versão atual do firmware;
+* Exibição do chip;
+* Exibição do espaço livre para OTA;
+* Mensagens de sucesso ou erro;
+* Reinício automático após atualização bem-sucedida;
+* Integração com o painel técnico;
+* Cuidados com watchdog durante o processo.
+
+Fluxo de uso:
 
 ```text
-Permitir que o gateway seja monitorado diretamente pelo navegador, sem depender somente do Node-RED ou do MQTT Explorer.
+Arduino IDE
+   ↓
+Sketch → Export Compiled Binary
+   ↓
+Arquivo .bin gerado
+   ↓
+Acesso à página /ota do ESP32
+   ↓
+Upload do firmware
+   ↓
+ESP32 grava a nova versão
+   ↓
+ESP32 reinicia automaticamente
 ```
 
-Essa etapa aproxima o projeto de um produto real, pois o equipamento passa a ter uma interface própria de supervisão e diagnóstico.
+> Para utilizar OTA, é necessário selecionar um esquema de partição com suporte a OTA na Arduino IDE.
 
 ---
 
 # Etapas do projeto
 
-## Etapa 1 — Teste individual dos sensores
-
-Cada sensor foi testado separadamente no Arduino.
-
-Sensores testados:
-
-* DHT11;
-* Sensor de umidade do solo;
-* LDR;
-* Sensor de chuva.
-
-**Status:** concluído.
-
----
-
-## Etapa 2 — Leitura conjunta dos sensores
-
-Todos os sensores foram conectados ao Arduino e passaram a ser lidos pelo mesmo programa.
-
-Exemplo de leitura:
-
-```text
-Temperatura: 22.2 °C
-Umidade do ar: 43.0 %
-Umidade do solo: 1023
-Luminosidade: 570
-Chuva: 6
-```
-
-**Status:** concluído.
+| Etapa | Descrição | Status |
+| ----- | --------- | ------ |
+| 1 | Teste individual dos sensores | Concluída |
+| 2 | Leitura conjunta dos sensores | Concluída |
+| 3 | Criação do pacote de dados | Concluída |
+| 4 | Comunicação UART entre Arduino e ESP32 | Concluída |
+| 5 | Validação dos dados | Concluída |
+| 6 | Teste do módulo Ethernet W5500 | Concluída |
+| 7 | Instalação do broker Mosquitto | Concluída |
+| 8 | Publicação dos dados por MQTT | Concluída |
+| 9 | Visualização no MQTT Explorer | Concluída |
+| 10 | Integração com Node-RED | Concluída |
+| 11 | Registro em arquivo CSV | Concluída |
+| 12 | Banco de dados SQLite | Concluída |
+| 13 | Armazenamento no cartão microSD do ESP32 | Concluída |
+| 14 | Armazenamento offline e reenvio MQTT | Concluída |
+| 15 | Wi-Fi como conexão reserva | Concluída |
+| 16 | Página web do gateway | Concluída |
+| 17 | Watchdog | Concluída |
+| 18 | FreeRTOS | Concluída |
+| 19 | Atualização OTA | Concluída |
 
 ---
 
-## Etapa 3 — Criação do pacote de dados
+## Situação final do projeto
 
-As leituras foram organizadas em uma única linha para facilitar a transmissão.
-
-Formato do pacote:
-
-```text
-DADOS,TEMPERATURA,UMIDADE_AR,UMIDADE_SOLO,LUMINOSIDADE,CHUVA
-```
-
-**Status:** concluído.
-
----
-
-## Etapa 4 — Comunicação UART entre Arduino e ESP32
-
-O Arduino envia os dados pelo pino TX e o ESP32 recebe os dados utilizando uma porta serial adicional.
-
-**Status:** concluído.
-
----
-
-## Etapa 5 — Validação dos dados
-
-O ESP32 valida o pacote antes de utilizar as informações.
-
-As principais verificações realizadas são:
-
-* Verificar se o pacote começa com `DADOS`;
-* Verificar a quantidade correta de valores;
-* Separar os campos por vírgulas;
-* Converter os campos para números;
-* Descartar mensagens incompletas;
-* Descartar leituras inválidas.
-
-**Status:** concluído.
-
----
-
-## Etapa 6 — Teste do módulo Ethernet W5500
-
-O ESP32 foi conectado ao W5500 utilizando comunicação SPI.
-
-Testes realizados:
-
-* Inicialização do módulo W5500;
-* Obtenção de endereço IP por DHCP;
-* Verificação do endereço IP;
-* Teste de comunicação pela rede cabeada.
-
-**Status:** concluído.
-
----
-
-## Etapa 7 — Instalação do broker Mosquitto
-
-O Mosquitto foi instalado no computador para funcionar como broker MQTT.
-
-**Status:** concluído.
-
----
-
-## Etapa 8 — Publicação dos dados por MQTT
-
-O ESP32 conecta-se ao broker Mosquitto e publica as leituras dos sensores.
-
-**Status:** concluído.
-
----
-
-## Etapa 9 — Visualização no MQTT Explorer
-
-O MQTT Explorer foi utilizado para visualizar os tópicos e os valores publicados pelo ESP32.
-
-Estrutura esperada:
-
-```text
-gateway
-└── ambiental
-    ├── temperatura
-    ├── umidade_ar
-    ├── umidade_solo
-    ├── luminosidade
-    ├── chuva
-    └── dados
-```
-
-**Status:** concluído.
-
----
-
-## Etapa 10 — Integração com Node-RED
-
-O Node-RED foi integrado ao broker Mosquitto para receber os dados MQTT e criar uma interface visual.
-
-Implementações realizadas:
-
-* MQTT in para os sensores;
-* Dashboard com gauges;
-* Gráficos em tempo real;
-* Textos de estado;
-* Alertas;
-* Registro em CSV;
-* Registro em SQLite.
-
-**Status:** concluído.
-
----
-
-## Etapa 11 — Registro em arquivo CSV
-
-O Node-RED foi configurado para transformar as leituras em linhas CSV e gravar os dados em arquivo local.
-
-**Status:** concluído.
-
----
-
-## Etapa 12 — Banco de dados SQLite
-
-O SQLite foi implementado para armazenar o histórico das leituras.
-
-Implementações realizadas:
-
-* Instalação do nó SQLite no Node-RED;
-* Criação do banco `gateway.db`;
-* Criação da tabela `leituras`;
-* Inserção automática das leituras;
-* Consulta das últimas leituras;
-* Formatação da consulta no debug do Node-RED.
-
-**Status:** concluído.
-
----
-
-## Etapa 13 — Armazenamento no cartão microSD do ESP32
-
-O ESP32 armazena as leituras recebidas via UART em um arquivo CSV no cartão microSD.
-
-Objetivo da etapa:
-
-* Registrar dados localmente no próprio gateway;
-* Manter um histórico independente do computador;
-* Permitir análise posterior das leituras;
-* Preparar a lógica de armazenamento offline.
-
-Arquivo utilizado:
-
-```text
-/dados_gateway.csv
-```
-
-Exemplo de conteúdo:
-
-```csv
-timestamp_ms,temperatura,umidade_ar,umidade_solo,luminosidade,chuva
-12500,21.40,41.00,1023,474,1022
-```
-
-Resultado obtido no monitor serial:
-
-```text
-microSD inicializado com sucesso.
-Leitura salva no microSD.
-```
-
-**Status:** concluído.
-
----
-
-## Etapa 14 — Armazenamento offline e reenvio
-
-Quando o ESP32 perde a conexão com o broker MQTT, os pacotes são armazenados no cartão microSD como pendentes.
-
-Funcionamento implementado:
-
-1. O ESP32 recebe os dados do Arduino por UART;
-2. O pacote é validado;
-3. O ESP32 tenta publicar no MQTT;
-4. Se a publicação falhar, o JSON é salvo em `/pendentes_mqtt.txt`;
-5. O gateway continua funcionando e recebendo novas leituras;
-6. O ESP32 tenta reconectar ao broker;
-7. Depois da reconexão, os pacotes pendentes são reenviados;
-8. Os pacotes reenviados são removidos da fila de pendentes.
-
-Arquivos utilizados:
-
-```text
-/pendentes_mqtt.txt
-/pendentes_tmp.txt
-```
-
-Resultado obtido durante o teste com o Mosquitto desligado:
-
-```text
-MQTT desconectado. Pacote nao publicado.
-Pacote salvo como pendente no microSD.
-```
-
-Resultado obtido após ligar o Mosquitto novamente:
-
-```text
-Reenvio finalizado. Reenviados: 47 | Ainda pendentes: 0
-```
-
-**Status:** concluído.
-
----
-
-## Etapa 15 — Wi-Fi como conexão reserva
-
-A Ethernet é a conexão principal do projeto.
-
-O Wi-Fi foi implementado como conexão reserva para manter o gateway funcionando quando a Ethernet não estiver disponível.
-
-Ordem de prioridade:
-
-1. Ethernet;
-2. Wi-Fi reserva;
-3. Armazenamento no cartão microSD.
-
-Funcionamento esperado:
-
-* Utilizar Ethernet como caminho principal;
-* Utilizar Wi-Fi quando necessário;
-* Manter o MQTT ativo usando a conexão disponível;
-* Continuar salvando pacotes no microSD caso nenhuma conexão consiga publicar no broker.
-
-**Status:** concluído.
-
----
-
-## Etapa 16 — Página web do gateway
-
-O ESP32 disponibiliza uma página web local com informações sobre o sistema.
-
-A primeira versão foi implementada de forma funcional e, em seguida, evoluída para um dashboard com aparência profissional.
-
-Informações exibidas:
-
-* Estado da conexão Ethernet;
-* Estado da conexão Wi-Fi reserva;
-* Estado da conexão MQTT;
-* Últimas leituras recebidas;
-* Tempo de funcionamento;
-* Quantidade de pacotes válidos recebidos;
-* Quantidade de erros;
-* Endereço IP da Ethernet;
-* Endereço IP do Wi-Fi;
-* Estado do microSD;
-* Falhas MQTT consecutivas;
-* Conexão atualmente em uso;
-* Opções de configuração futuras.
-
-Rotas implementadas:
-
-```text
-/
-/config
-/status
-```
-
-Características da interface:
-
-* Tema escuro industrial;
-* Cards de status das conexões;
-* Cards das leituras ambientais;
-* Área de diagnóstico técnico;
-* Atualização automática da página;
-* Página responsiva para computador e celular;
-* Rota JSON para integração futura.
-
-**Status:** concluído.
-
----
-
-## Etapa 17 — Watchdog
-
-O watchdog será utilizado para reiniciar o ESP32 caso alguma parte do sistema deixe de responder.
-
-Situações que poderão ser monitoradas:
-
-* Travamento da comunicação UART;
-* Falha do módulo W5500;
-* Falha da conexão MQTT;
-* Travamento na gravação do cartão microSD;
-* Bloqueio de alguma tarefa do sistema.
-
-**Status:** pendente.
-
----
-
-## Etapa 18 — FreeRTOS
-
-O projeto será dividido em tarefas utilizando FreeRTOS.
-
-Organização planejada:
-
-```text
-Tarefa 1: receber dados pela UART
-Tarefa 2: validar os dados recebidos
-Tarefa 3: publicar os dados no MQTT
-Tarefa 4: verificar Ethernet e Wi-Fi
-Tarefa 5: gravar os dados no cartão microSD
-Tarefa 6: executar o servidor web
-Tarefa 7: monitorar o funcionamento do sistema
-```
-
-**Status:** pendente.
-
----
-
-## Etapa 19 — Atualização OTA
-
-A atualização OTA permitirá atualizar o programa do ESP32 pela rede.
-
-Isso evita a necessidade de conectar o cabo USB sempre que uma nova versão do programa for enviada.
-
-**Status:** pendente.
-
----
-
-# Situação atual do projeto
-
-Atualmente, o sistema consegue:
+O sistema final consegue:
 
 * Ler todos os sensores no Arduino;
-* Criar o pacote ambiental;
-* Enviar os dados por UART;
-* Receber os dados no ESP32;
-* Validar o pacote recebido;
-* Separar as leituras;
-* Conectar o ESP32 pela Ethernet usando W5500;
-* Obter endereço IP por DHCP;
-* Conectar-se ao Mosquitto;
-* Publicar as leituras utilizando MQTT;
-* Exibir os dados no MQTT Explorer;
-* Exibir os dados no Node-RED Dashboard;
+* Enviar pacote ambiental por UART;
+* Receber e validar dados no ESP32;
+* Conectar pela Ethernet usando W5500;
+* Usar Wi-Fi como reserva;
+* Publicar dados no MQTT;
+* Exibir dados no MQTT Explorer;
+* Integrar com Node-RED;
 * Exibir gauges, gráficos e textos no dashboard;
-* Gerar alertas no Node-RED;
-* Registrar dados em arquivo CSV pelo Node-RED;
-* Registrar dados em banco SQLite;
-* Consultar as últimas leituras salvas no SQLite;
-* Inicializar o microSD no ESP32;
-* Gravar histórico local em `/dados_gateway.csv`;
-* Detectar falha de publicação MQTT;
-* Salvar pacotes MQTT pendentes no microSD;
-* Reenviar automaticamente os pacotes pendentes após reconexão;
-* Limpar a fila de pendentes após o reenvio com sucesso;
-* Utilizar Wi-Fi como conexão reserva;
-* Disponibilizar página web local do gateway;
-* Exibir dashboard web com tema profissional;
-* Exibir estados de Ethernet, Wi-Fi, MQTT e microSD;
-* Exibir uptime, pacotes, erros e falhas MQTT;
-* Disponibilizar rota `/config` como base para configurações futuras;
-* Disponibilizar rota `/status` em JSON.
+* Gerar alertas;
+* Registrar leituras em CSV;
+* Registrar histórico em SQLite;
+* Gravar histórico local no microSD;
+* Detectar falhas de publicação MQTT;
+* Salvar pacotes pendentes no microSD;
+* Reenviar pendentes após reconexão;
+* Exibir painel web local;
+* Exibir painel técnico do gateway;
+* Monitorar heap, filas, tarefas, comunicação e watchdog;
+* Executar tarefas com FreeRTOS;
+* Utilizar watchdog para recuperação de falhas;
+* Atualizar firmware via OTA;
+* Reiniciar automaticamente após atualização bem-sucedida.
 
 ---
 
-## Próximo passo
-
-O próximo passo recomendado é implementar o **watchdog**.
-
-O watchdog será usado para aumentar a confiabilidade do gateway. Ele deverá reiniciar o ESP32 automaticamente caso o sistema trave ou alguma parte crítica deixe de responder.
-
-Objetivo do próximo passo:
-
-```text
-Tornar o gateway mais robusto, capaz de se recuperar sozinho de travamentos ou falhas críticas.
-```
-
-Situações que poderão ser monitoradas:
-
-* Travamento do loop principal;
-* Falha prolongada na comunicação UART;
-* Falha prolongada do MQTT;
-* Falha na comunicação com o W5500;
-* Bloqueio durante acesso ao microSD;
-* Tempo excessivo sem receber pacotes válidos;
-* Erros consecutivos acima de um limite definido.
-
-Fluxo desejado da próxima etapa:
-
-```text
-ESP32 funcionando normalmente
-        ↓
-Alimenta o watchdog periodicamente
-        ↓
-Se o código travar ou parar de alimentar o watchdog
-        ↓
-ESP32 reinicia automaticamente
-        ↓
-Gateway volta a operar
-```
-
-Primeira implementação do próximo passo:
-
-1. Incluir a biblioteca de watchdog do ESP32;
-2. Configurar um tempo limite seguro;
-3. Registrar o loop principal no watchdog;
-4. Alimentar o watchdog somente quando o sistema estiver rodando corretamente;
-5. Testar o reinício automático com uma simulação de travamento;
-6. Exibir informações de watchdog no monitor serial;
-7. Futuramente exibir o estado do watchdog na página web.
-
----
-
-## Melhorias futuras
-
-* Adicionar data e hora utilizando NTP ou módulo RTC;
-* Converter as leituras dos sensores analógicos para porcentagem;
-* Calibrar o sensor de umidade do solo;
-* Calibrar o sensor de chuva;
-* Configurar usuário e senha no MQTT;
-* Adicionar criptografia TLS ao MQTT;
-* Publicar os dados no formato JSON;
-* Adicionar uma identificação exclusiva para o gateway;
-* Criar níveis de alerta;
-* Implementar confirmação de entrega;
-* Adicionar CRC ao pacote UART;
-* Melhorar o buffer offline no microSD com limite de tamanho;
-* Adicionar contagem de pacotes pendentes;
-* Adicionar identificação única para cada leitura;
-* Reenviar dados armazenados quando a conexão voltar;
-* Tornar a página `/config` funcional;
-* Implementar watchdog;
-* Separar o código em tarefas FreeRTOS;
-* Criar uma placa de circuito impresso;
-* Substituir os jumpers por conectores;
-* Adicionar uma fonte de alimentação protegida;
-* Montar o projeto em uma caixa.
-
----
-
-## Tecnologias utilizadas e planejadas
+## Tecnologias utilizadas
 
 * Arduino;
 * ESP32;
-* C e C++;
+* C/C++;
 * UART;
 * SPI;
 * Ethernet;
-* Wi-Fi;
 * W5500;
+* Wi-Fi;
 * MQTT;
 * Mosquitto;
 * MQTT Explorer;
@@ -1011,38 +645,69 @@ Primeira implementação do próximo passo:
 * Node-RED Dashboard;
 * SQLite;
 * CSV;
-* Cartão microSD;
-* Página web local;
+* microSD;
 * JSON;
-* Watchdog;
-* FreeRTOS;
 * HTML;
 * CSS;
-* JavaScript.
+* JavaScript;
+* FreeRTOS;
+* Watchdog;
+* OTA.
 
 ---
 
 ## Aprendizados do projeto
 
-Este projeto permite estudar conceitos importantes de sistemas embarcados e redes, como:
+Este projeto permitiu estudar e aplicar conceitos importantes de sistemas embarcados, IoT e redes:
 
 * Leitura de sensores digitais e analógicos;
 * Comunicação entre microcontroladores;
 * Protocolo UART;
 * Protocolo SPI;
-* Comunicação Ethernet;
-* Arquitetura cliente-servidor;
+* Rede cabeada com Ethernet;
+* Wi-Fi como fallback;
 * Protocolo MQTT;
-* Desenvolvimento de gateways IoT;
-* Visualização de dados em dashboard;
-* Registro de dados em CSV;
-* Utilização de bancos de dados SQLite;
-* Armazenamento local;
-* Sistemas tolerantes a falhas;
-* Execução de tarefas concorrentes com FreeRTOS;
-* Utilização de watchdog;
-* Atualização de firmware por OTA;
-* Desenvolvimento de um sistema embarcado completo.
+* Arquitetura de gateway IoT;
+* Node-RED para automação e visualização;
+* Armazenamento em CSV;
+* Banco de dados SQLite;
+* Armazenamento local em microSD;
+* Fila offline e reenvio automático;
+* Desenvolvimento de página web embarcada;
+* Diagnóstico técnico de firmware;
+* Organização com FreeRTOS;
+* Monitoramento com watchdog;
+* Atualização remota de firmware via OTA;
+* Estruturação de um projeto embarcado com aparência de produto real.
+
+---
+
+## Possíveis melhorias futuras
+
+Mesmo com o projeto concluído, algumas melhorias podem ser adicionadas em versões futuras:
+
+* Adicionar data e hora por NTP ou RTC;
+* Converter sensores analógicos para porcentagem calibrada;
+* Calibrar o sensor de umidade do solo;
+* Calibrar o sensor de chuva;
+* Adicionar usuário e senha no MQTT;
+* Adicionar TLS ao MQTT;
+* Adicionar CRC ao pacote UART;
+* Criar identificação única por gateway;
+* Adicionar limite de tamanho para arquivos de pendentes;
+* Criar placa de circuito impresso;
+* Substituir jumpers por conectores;
+* Montar o protótipo em caixa;
+* Adicionar fonte de alimentação dedicada e protegida;
+* Evoluir a comunicação para RS-485/Modbus em uma versão industrial.
+
+---
+
+## Conclusão
+
+O **Gateway Ambiental ESP32 + Arduino** foi concluído como um sistema IoT funcional, com coleta de dados, comunicação entre microcontroladores, publicação MQTT, armazenamento local e remoto, dashboard, banco de dados, página web embarcada, tolerância a falhas, execução com FreeRTOS, watchdog e atualização OTA.
+
+O resultado final representa um projeto completo de sistemas embarcados e IoT, com foco em confiabilidade, documentação, integração de hardware e software, comunicação em rede e aproximação com uma arquitetura usada em aplicações reais.
 
 ---
 
@@ -1051,8 +716,8 @@ Este projeto permite estudar conceitos importantes de sistemas embarcados e rede
 Desenvolvido por **Guilherme Costa** como projeto de estudo nas áreas de:
 
 * Engenharia da Computação;
-* Sistemas embarcados;
+* Sistemas Embarcados;
 * Internet das Coisas;
-* Redes de computadores;
+* Redes de Computadores;
 * Eletrônica;
 * Comunicação entre dispositivos.
