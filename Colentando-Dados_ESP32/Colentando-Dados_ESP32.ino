@@ -230,6 +230,46 @@ const char* nomesTarefasSistema[TOTAL_TAREFAS_SISTEMA] = {
   "MONITOR"
 };
 
+const char* descricoesTarefasSistema[TOTAL_TAREFAS_SISTEMA] = {
+  "Recebe pacotes do Arduino pela UART",
+  "Valida e distribui leituras ambientais",
+  "Mantem MQTT e publica leituras",
+  "Verifica Ethernet, Wi-Fi e fallback",
+  "Grava historico e pendencias no microSD",
+  "Atende o painel web embarcado",
+  "Supervisiona tarefas e alimenta watchdog"
+};
+
+const uint32_t stacksTarefasSistema[TOTAL_TAREFAS_SISTEMA] = {
+  4096,
+  4096,
+  8192,
+  6144,
+  4096,
+  8192,
+  4096
+};
+
+const uint8_t coresTarefasSistema[TOTAL_TAREFAS_SISTEMA] = {
+  1,
+  1,
+  1,
+  0,
+  1,
+  0,
+  0
+};
+
+const UBaseType_t prioridadesTarefasSistema[TOTAL_TAREFAS_SISTEMA] = {
+  3,
+  3,
+  2,
+  1,
+  2,
+  1,
+  1
+};
+
 volatile unsigned long heartbeatTarefas[TOTAL_TAREFAS_SISTEMA] = {0};
 
 const unsigned long limiteHeartbeatMs = 30000;
@@ -564,6 +604,7 @@ void enviarCSSDashboard(Client& cliente) {
   cliente.println(".brand h1{margin:0;font-size:1.55rem;letter-spacing:.3px}.brand p{margin:6px 0 0;color:var(--muted);font-size:.95rem}.pill{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;font-weight:700;border:1px solid var(--border);background:#0b1220}.dot{width:10px;height:10px;border-radius:50%;display:inline-block}.dot.ok{background:var(--ok);box-shadow:0 0 14px var(--ok)}.dot.warn{background:var(--warn);box-shadow:0 0 14px var(--warn)}.dot.erro{background:var(--err);box-shadow:0 0 14px var(--err)}");
   cliente.println(".grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px}.grid.sensors{grid-template-columns:repeat(5,1fr)}.card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 14px 34px rgba(0,0,0,.22)}.card h2{font-size:.82rem;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin:0 0 12px}.value{font-size:1.8rem;font-weight:800;margin:0}.unit{font-size:.95rem;color:var(--muted);font-weight:600}.sub{margin-top:8px;color:var(--muted);font-size:.9rem;word-break:break-word}.statusText{font-size:1.25rem;font-weight:800;margin:0}.okText{color:var(--ok)}.warnText{color:var(--warn)}.errText{color:var(--err)}.blueText{color:var(--blue)}");
   cliente.println(".section{margin:22px 0 12px;display:flex;justify-content:space-between;align-items:end;gap:12px}.section h2{margin:0;font-size:1.05rem}.section span{color:var(--muted);font-size:.9rem}.table{width:100%;border-collapse:collapse}.table td{padding:10px 0;border-bottom:1px solid rgba(51,65,85,.75)}.table tr:last-child td{border-bottom:0}.table td:first-child{color:var(--muted)}.table td:last-child{text-align:right;font-weight:700}.actions{display:flex;gap:10px;flex-wrap:wrap}.btn{display:inline-block;padding:11px 14px;border-radius:12px;text-decoration:none;color:var(--text);border:1px solid var(--border);background:#0b1220;font-weight:700}.btn.primary{border-color:#0ea5e9;background:rgba(14,165,233,.14);color:#7dd3fc}.footer{margin-top:18px;color:var(--muted);font-size:.85rem;text-align:center}");
+  cliente.println(".grid.four{grid-template-columns:repeat(4,1fr)}.wide{overflow-x:auto}.techTable{min-width:860px}.techTable th,.techTable td{padding:10px 12px;border-bottom:1px solid rgba(51,65,85,.75);text-align:left}.techTable th{font-size:.75rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:800}.techTable td{font-size:.92rem}.techTable td.num{text-align:right;font-weight:800}.badge{display:inline-block;padding:5px 9px;border-radius:999px;font-size:.78rem;font-weight:900;border:1px solid var(--border);background:#0b1220}.okBadge{color:var(--ok);border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.10)}.warnBadge{color:var(--warn);border-color:rgba(250,204,21,.45);background:rgba(250,204,21,.10)}.errBadge{color:var(--err);border-color:rgba(239,68,68,.45);background:rgba(239,68,68,.10)}");
   cliente.println("@media(max-width:900px){.grid,.grid.sensors{grid-template-columns:repeat(2,1fr)}.top{align-items:flex-start;flex-direction:column}.pill{align-self:flex-start}}@media(max-width:560px){.grid,.grid.sensors{grid-template-columns:1fr}.wrap{width:92%;padding-top:16px}.value{font-size:1.55rem}.table td:last-child{text-align:left}.table td{display:block;border-bottom:0;padding:5px 0}.table tr{display:block;border-bottom:1px solid rgba(51,65,85,.75);padding:8px 0}}");
   cliente.println("</style>");
 }
@@ -730,6 +771,7 @@ void enviarPaginaPrincipal(Client& cliente) {
   cliente.println("<div class='actions'>");
   cliente.println("<a class='btn primary' href='/'>Atualizar painel</a>");
   cliente.println("<a class='btn' href='/config'>Configuracoes</a>");
+  cliente.println("<a class='btn' href='/tecnico'>Painel tecnico</a>");
   cliente.println("<a class='btn' href='/status'>Status JSON</a>");
   cliente.println("</div>");
   cliente.println("<div class='sub'>Interface local embarcada no ESP32. Nao depende de internet externa.</div>");
@@ -779,7 +821,314 @@ void enviarPaginaConfig(Client& cliente) {
   cliente.println("</table></div>");
   cliente.println("</section>");
 
-  cliente.println("<section class='card'><div class='actions'><a class='btn primary' href='/'>Voltar ao painel</a><a class='btn' href='/status'>Ver JSON</a></div><div class='sub'>Nesta versao, a pagina e apenas informativa. Em uma etapa futura, ela pode salvar configuracoes no microSD.</div></section>");
+  cliente.println("<section class='card'><div class='actions'><a class='btn primary' href='/'>Voltar ao painel</a><a class='btn' href='/tecnico'>Painel tecnico</a><a class='btn' href='/status'>Ver JSON</a></div><div class='sub'>Nesta versao, a pagina e apenas informativa. Em uma etapa futura, ela pode salvar configuracoes no microSD.</div></section>");
+  cliente.println("</main></body></html>");
+}
+
+
+TaskHandle_t obterHandleTarefa(IndiceTarefaSistema indice) {
+  switch (indice) {
+    case TAREFA_UART:
+      return handleTaskUART;
+
+    case TAREFA_VALIDADOR:
+      return handleTaskValidador;
+
+    case TAREFA_MQTT:
+      return handleTaskMQTT;
+
+    case TAREFA_CONEXOES:
+      return handleTaskConexoes;
+
+    case TAREFA_MICROSD:
+      return handleTaskMicroSD;
+
+    case TAREFA_WEB:
+      return handleTaskWeb;
+
+    case TAREFA_MONITOR:
+      return handleTaskMonitor;
+
+    default:
+      return NULL;
+  }
+}
+
+String classeBadgeTarefa(IndiceTarefaSistema indice) {
+  TaskHandle_t handle = obterHandleTarefa(indice);
+
+  if (handle == NULL) {
+    return "errBadge";
+  }
+
+  unsigned long ultimoHeartbeat = heartbeatTarefas[indice];
+
+  if (ultimoHeartbeat == 0) {
+    return "warnBadge";
+  }
+
+  if (millis() - ultimoHeartbeat <= limiteHeartbeatMs) {
+    return "okBadge";
+  }
+
+  return "errBadge";
+}
+
+String estadoTarefaTexto(IndiceTarefaSistema indice) {
+  TaskHandle_t handle = obterHandleTarefa(indice);
+
+  if (handle == NULL) {
+    return "Nao criada";
+  }
+
+  unsigned long ultimoHeartbeat = heartbeatTarefas[indice];
+
+  if (ultimoHeartbeat == 0) {
+    return "Iniciando";
+  }
+
+  if (millis() - ultimoHeartbeat <= limiteHeartbeatMs) {
+    return "OK";
+  }
+
+  return "Sem heartbeat";
+}
+
+String idadeHeartbeatTexto(IndiceTarefaSistema indice) {
+  unsigned long ultimoHeartbeat = heartbeatTarefas[indice];
+
+  if (ultimoHeartbeat == 0) {
+    return "--";
+  }
+
+  unsigned long segundos = (millis() - ultimoHeartbeat) / 1000;
+  return String(segundos) + " s";
+}
+
+void enviarLinhaTarefaTecnica(Client& cliente, IndiceTarefaSistema indice) {
+  TaskHandle_t handle = obterHandleTarefa(indice);
+
+  cliente.println("<tr>");
+
+  cliente.print("<td><b>");
+  cliente.print(nomesTarefasSistema[indice]);
+  cliente.print("</b><div class='sub'>");
+  cliente.print(descricoesTarefasSistema[indice]);
+  cliente.println("</div></td>");
+
+  cliente.print("<td><span class='badge ");
+  cliente.print(classeBadgeTarefa(indice));
+  cliente.print("'>");
+  cliente.print(estadoTarefaTexto(indice));
+  cliente.println("</span></td>");
+
+  cliente.print("<td class='num'>");
+  cliente.print(coresTarefasSistema[indice]);
+  cliente.println("</td>");
+
+  cliente.print("<td class='num'>");
+  if (handle != NULL) {
+    cliente.print(uxTaskPriorityGet(handle));
+  } else {
+    cliente.print("--");
+  }
+  cliente.println("</td>");
+
+  cliente.print("<td class='num'>");
+  cliente.print(stacksTarefasSistema[indice]);
+  cliente.println("</td>");
+
+  cliente.print("<td class='num'>");
+  if (handle != NULL) {
+    cliente.print((uint32_t)uxTaskGetStackHighWaterMark(handle));
+  } else {
+    cliente.print("--");
+  }
+  cliente.println("</td>");
+
+  cliente.print("<td class='num'>");
+  cliente.print(idadeHeartbeatTexto(indice));
+  cliente.println("</td>");
+
+  cliente.println("</tr>");
+}
+
+void enviarPaginaTecnica(Client& cliente) {
+  enviarCabecalhoHTML(cliente);
+
+  bool tarefasOk = true;
+  unsigned long agora = millis();
+
+  for (uint8_t i = 0; i < TOTAL_TAREFAS_SISTEMA; i++) {
+    TaskHandle_t handle = obterHandleTarefa((IndiceTarefaSistema)i);
+    unsigned long ultimoHeartbeat = heartbeatTarefas[i];
+
+    if (handle == NULL) {
+      tarefasOk = false;
+    } else if (ultimoHeartbeat > 0 && agora - ultimoHeartbeat > limiteHeartbeatMs) {
+      tarefasOk = false;
+    }
+  }
+
+  String classeGeral = tarefasOk && watchdogAtivo ? "ok" : "warn";
+  String textoGeral = tarefasOk && watchdogAtivo ? "SISTEMA SUPERVISIONADO" : "VERIFICAR SISTEMA";
+
+  cliente.println("<!DOCTYPE html><html lang='pt-br'><head><meta charset='UTF-8'>");
+  cliente.println("<meta name='viewport' content='width=device-width, initial-scale=1.0'>");
+  cliente.println("<meta http-equiv='refresh' content='5'>");
+  cliente.println("<title>Painel tecnico - Gateway Ambiental ESP32</title>");
+  enviarCSSDashboard(cliente);
+  cliente.println("</head><body><main class='wrap'>");
+
+  cliente.println("<header class='top'>");
+  cliente.println("<div class='brand'>");
+  cliente.println("<h1>Painel tecnico do Gateway</h1>");
+  cliente.println("<p>Diagnostico FreeRTOS, watchdog, filas, memoria e barramento interno</p>");
+  cliente.println("</div>");
+  cliente.print("<div class='pill'><span class='dot ");
+  cliente.print(classeGeral);
+  cliente.print("'></span>");
+  cliente.print(textoGeral);
+  cliente.println("</div>");
+  cliente.println("</header>");
+
+  cliente.println("<div class='section'><div><h2>Resumo do sistema</h2><span>Indicadores internos do firmware</span></div></div>");
+  cliente.println("<section class='grid four'>");
+
+  enviarCardSensor(cliente, "Heap livre", String(ESP.getFreeHeap()), "bytes");
+  enviarCardSensor(cliente, "Heap minimo", String(ESP.getMinFreeHeap()), "bytes");
+  enviarCardSensor(cliente, "Uptime", formatarUptime(), "");
+  enviarCardSensor(cliente, "Tarefas", String(TOTAL_TAREFAS_SISTEMA), "ativas");
+
+  cliente.println("</section>");
+
+  cliente.println("<section class='grid'>");
+
+  cliente.println("<div class='card'><h2>Watchdog</h2><table class='table'>");
+  cliente.print("<tr><td>Status</td><td class='");
+  cliente.print(watchdogAtivo ? "okText" : "errText");
+  cliente.print("'>");
+  cliente.print(watchdogAtivo ? "Ativo" : "Inativo");
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Timeout</td><td>");
+  cliente.print(TEMPO_WATCHDOG_SEGUNDOS);
+  cliente.println(" s</td></tr>");
+  cliente.println("<tr><td>Tarefa alimentadora</td><td>MONITOR</td></tr>");
+  cliente.print("<tr><td>Ultimo reset</td><td>");
+  cliente.print(motivoUltimoReset);
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Resets por WDT</td><td>");
+  cliente.print(totalResetsWatchdog);
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Teste serial T</td><td>");
+  cliente.print(HABILITAR_TESTE_WATCHDOG ? "Habilitado" : "Desabilitado");
+  cliente.println("</td></tr>");
+  cliente.println("</table></div>");
+
+  cliente.println("<div class='card'><h2>Filas FreeRTOS</h2><table class='table'>");
+  cliente.print("<tr><td>Fila UART</td><td>");
+  cliente.print(filaUART != NULL ? uxQueueMessagesWaiting(filaUART) : 0);
+  cliente.println("/10</td></tr>");
+  cliente.print("<tr><td>Fila MQTT</td><td>");
+  cliente.print(filaMQTT != NULL ? uxQueueMessagesWaiting(filaMQTT) : 0);
+  cliente.println("/10</td></tr>");
+  cliente.print("<tr><td>Fila microSD</td><td>");
+  cliente.print(filaSD != NULL ? uxQueueMessagesWaiting(filaSD) : 0);
+  cliente.println("/10</td></tr>");
+  cliente.print("<tr><td>Mutex sistema</td><td class='");
+  cliente.print(mutexSistema != NULL ? "okText" : "errText");
+  cliente.print("'>");
+  cliente.print(mutexSistema != NULL ? "Criado" : "Falha");
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Mutex SPI</td><td class='");
+  cliente.print(mutexBarramentoSPI != NULL ? "okText" : "errText");
+  cliente.print("'>");
+  cliente.print(mutexBarramentoSPI != NULL ? "Criado" : "Falha");
+  cliente.println("</td></tr>");
+  cliente.println("</table></div>");
+
+  cliente.println("<div class='card'><h2>Comunicacao</h2><table class='table'>");
+  cliente.print("<tr><td>Conexao atual</td><td>");
+  cliente.print(nomeConexao(conexaoAtual));
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Ethernet</td><td class='");
+  cliente.print(ethernetOkWeb() ? "okText" : "errText");
+  cliente.print("'>");
+  cliente.print(ethernetOkWeb() ? "OK" : "OFF");
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Wi-Fi</td><td class='");
+  cliente.print(wifiOkWeb() ? "okText" : "warnText");
+  cliente.print("'>");
+  cliente.print(wifiOkWeb() ? "OK" : "OFF/Standby");
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>MQTT</td><td class='");
+  cliente.print(mqttOk() ? "okText" : "errText");
+  cliente.print("'>");
+  cliente.print(mqttOk() ? "OK" : "OFF");
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Falhas MQTT</td><td>");
+  cliente.print(falhasMQTTConsecutivas);
+  cliente.println("</td></tr>");
+  cliente.println("</table></div>");
+
+  cliente.println("</section>");
+
+  cliente.println("<div class='section'><div><h2>Tarefas FreeRTOS</h2><span>Status, core, prioridade, stack e heartbeat</span></div></div>");
+  cliente.println("<section class='card wide'>");
+  cliente.println("<table class='techTable'>");
+  cliente.println("<thead><tr><th>Tarefa</th><th>Status</th><th>Core</th><th>Prior.</th><th>Stack cfg.</th><th>Stack livre</th><th>Heartbeat</th></tr></thead><tbody>");
+
+  for (uint8_t i = 0; i < TOTAL_TAREFAS_SISTEMA; i++) {
+    enviarLinhaTarefaTecnica(cliente, (IndiceTarefaSistema)i);
+  }
+
+  cliente.println("</tbody></table>");
+  cliente.println("<div class='sub'>Stack livre e mostrada pelo FreeRTOS como marca de agua restante da tarefa. Valores muito baixos indicam risco de estouro de stack.</div>");
+  cliente.println("</section>");
+
+  cliente.println("<div class='section'><div><h2>Diagnostico operacional</h2><span>Contadores usados pelo gateway</span></div></div>");
+  cliente.println("<section class='grid'>");
+
+  cliente.println("<div class='card'><h2>Pacotes</h2><table class='table'>");
+  cliente.print("<tr><td>Pacotes validos</td><td>");
+  cliente.print(totalPacotesRecebidos);
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Erros detectados</td><td>");
+  cliente.print(totalErros);
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Ultima leitura</td><td>");
+  cliente.print(tempoDesdeUltimaLeitura());
+  cliente.println("</td></tr>");
+  cliente.println("</table></div>");
+
+  cliente.println("<div class='card'><h2>Armazenamento</h2><table class='table'>");
+  cliente.print("<tr><td>microSD</td><td class='");
+  cliente.print(microSdOk ? "okText" : "errText");
+  cliente.print("'>");
+  cliente.print(microSdOk ? "Operacional" : "Indisponivel");
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Arquivo dados</td><td>");
+  cliente.print(ARQUIVO_DADOS);
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Pendentes MQTT</td><td>");
+  cliente.print(ARQUIVO_PENDENTES);
+  cliente.println("</td></tr>");
+  cliente.println("</table></div>");
+
+  cliente.println("<div class='card'><h2>Barramento</h2><table class='table'>");
+  cliente.println("<tr><td>SPI</td><td>W5500 + microSD</td></tr>");
+  cliente.print("<tr><td>Protecao</td><td class='");
+  cliente.print(mutexBarramentoSPI != NULL ? "okText" : "errText");
+  cliente.print("'>");
+  cliente.print(mutexBarramentoSPI != NULL ? "Mutex ativo" : "Sem mutex");
+  cliente.println("</td></tr>");
+  cliente.println("<tr><td>UART sensores</td><td>Serial2 / 9600 bps</td></tr>");
+  cliente.println("</table></div>");
+
+  cliente.println("</section>");
+
+  cliente.println("<section class='card'><div class='actions'><a class='btn primary' href='/'>Voltar ao painel</a><a class='btn' href='/config'>Configuracoes</a><a class='btn' href='/status'>Status JSON</a></div><div class='sub'>Painel tecnico somente leitura para diagnostico local do firmware.</div></section>");
+  cliente.println("<p class='footer'>Gateway Ambiental ESP32 | FreeRTOS | Watchdog | Diagnostico tecnico</p>");
   cliente.println("</main></body></html>");
 }
 
@@ -886,6 +1235,8 @@ void atenderClienteWeb(Client& cliente) {
 
   if (requisicao.indexOf("GET /config") >= 0) {
     enviarPaginaConfig(cliente);
+  } else if (requisicao.indexOf("GET /tecnico") >= 0 || requisicao.indexOf("GET /tasks") >= 0) {
+    enviarPaginaTecnica(cliente);
   } else if (requisicao.indexOf("GET /status") >= 0) {
     enviarStatusJSON(cliente);
   } else {
@@ -913,7 +1264,7 @@ void iniciarPaginaWeb() {
     Serial.println(ipParaTexto(WiFi.localIP()));
   }
 
-  Serial.println("Rotas: /  |  /config  |  /status");
+  Serial.println("Rotas: /  |  /config  |  /tecnico  |  /tasks  |  /status");
 }
 
 void executarPaginaWeb() {
@@ -2104,13 +2455,13 @@ bool criarTarefa(const char* nome, TaskFunction_t funcao, uint32_t stack, UBaseT
 void iniciarTarefasFreeRTOS() {
   bool tarefasOk = true;
 
-  tarefasOk = tarefasOk && criarTarefa("UART_RX", tarefaReceberUART, 4096, 3, &handleTaskUART, 1);
-  tarefasOk = tarefasOk && criarTarefa("VALIDADOR", tarefaValidarDados, 4096, 3, &handleTaskValidador, 1);
-  tarefasOk = tarefasOk && criarTarefa("MQTT", tarefaMQTT, 8192, 2, &handleTaskMQTT, 1);
-  tarefasOk = tarefasOk && criarTarefa("CONEXOES", tarefaConexoes, 6144, 1, &handleTaskConexoes, 0);
-  tarefasOk = tarefasOk && criarTarefa("MICROSD", tarefaMicroSD, 4096, 2, &handleTaskMicroSD, 1);
-  tarefasOk = tarefasOk && criarTarefa("WEB_SERVER", tarefaServidorWeb, 8192, 1, &handleTaskWeb, 0);
-  tarefasOk = tarefasOk && criarTarefa("MONITOR", tarefaMonitoramento, 4096, 1, &handleTaskMonitor, 0);
+  tarefasOk = tarefasOk && criarTarefa(nomesTarefasSistema[TAREFA_UART], tarefaReceberUART, stacksTarefasSistema[TAREFA_UART], prioridadesTarefasSistema[TAREFA_UART], &handleTaskUART, coresTarefasSistema[TAREFA_UART]);
+  tarefasOk = tarefasOk && criarTarefa(nomesTarefasSistema[TAREFA_VALIDADOR], tarefaValidarDados, stacksTarefasSistema[TAREFA_VALIDADOR], prioridadesTarefasSistema[TAREFA_VALIDADOR], &handleTaskValidador, coresTarefasSistema[TAREFA_VALIDADOR]);
+  tarefasOk = tarefasOk && criarTarefa(nomesTarefasSistema[TAREFA_MQTT], tarefaMQTT, stacksTarefasSistema[TAREFA_MQTT], prioridadesTarefasSistema[TAREFA_MQTT], &handleTaskMQTT, coresTarefasSistema[TAREFA_MQTT]);
+  tarefasOk = tarefasOk && criarTarefa(nomesTarefasSistema[TAREFA_CONEXOES], tarefaConexoes, stacksTarefasSistema[TAREFA_CONEXOES], prioridadesTarefasSistema[TAREFA_CONEXOES], &handleTaskConexoes, coresTarefasSistema[TAREFA_CONEXOES]);
+  tarefasOk = tarefasOk && criarTarefa(nomesTarefasSistema[TAREFA_MICROSD], tarefaMicroSD, stacksTarefasSistema[TAREFA_MICROSD], prioridadesTarefasSistema[TAREFA_MICROSD], &handleTaskMicroSD, coresTarefasSistema[TAREFA_MICROSD]);
+  tarefasOk = tarefasOk && criarTarefa(nomesTarefasSistema[TAREFA_WEB], tarefaServidorWeb, stacksTarefasSistema[TAREFA_WEB], prioridadesTarefasSistema[TAREFA_WEB], &handleTaskWeb, coresTarefasSistema[TAREFA_WEB]);
+  tarefasOk = tarefasOk && criarTarefa(nomesTarefasSistema[TAREFA_MONITOR], tarefaMonitoramento, stacksTarefasSistema[TAREFA_MONITOR], prioridadesTarefasSistema[TAREFA_MONITOR], &handleTaskMonitor, coresTarefasSistema[TAREFA_MONITOR]);
 
   if (tarefasOk) {
     Serial.println("Todas as tarefas FreeRTOS foram criadas.");
