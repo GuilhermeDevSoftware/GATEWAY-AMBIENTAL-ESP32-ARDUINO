@@ -3,6 +3,16 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <SD.h>
+#include "esp_task_wdt.h"
+#include "esp_system.h"
+
+#if __has_include("esp_arduino_version.h")
+  #include "esp_arduino_version.h"
+#endif
+
+#ifndef ESP_ARDUINO_VERSION_MAJOR
+  #define ESP_ARDUINO_VERSION_MAJOR 2
+#endif
 
 // ==================================================
 // CONFIGURACAO DOS PINOS
@@ -23,6 +33,18 @@
 // UART ESP32 <-> Arduino
 #define PINO_UART_RX    16
 #define PINO_UART_TX    17
+
+// ==================================================
+// CONFIGURACAO DO WATCHDOG
+// ==================================================
+
+// Tempo maximo sem o loop principal alimentar o watchdog.
+// Se o firmware travar por mais tempo que isso, o ESP32 reinicia.
+#define TEMPO_WATCHDOG_SEGUNDOS 20
+
+// Envie a letra T pelo Monitor Serial para simular um travamento.
+// Depois do teste, pode trocar para false.
+#define HABILITAR_TESTE_WATCHDOG true
 
 // ==================================================
 // CONFIGURACAO DO microSD
@@ -150,6 +172,13 @@ bool existeLeituraValida = false;
 unsigned long totalPacotesRecebidos = 0;
 unsigned long totalErros = 0;
 unsigned long ultimaLeituraValidaMs = 0;
+
+bool watchdogAtivo = false;
+String motivoUltimoReset = "Nao identificado";
+
+// Mantem a contagem mesmo depois de um reset do ESP32.
+// Essa contagem zera quando o ESP32 perde energia.
+RTC_DATA_ATTR unsigned long totalResetsWatchdog = 0;
 
 // ==================================================
 // CONTROLE DO SPI COMPARTILHADO
@@ -319,6 +348,134 @@ bool sistemaOnline() {
   return conexaoAtual != CONEXAO_OFFLINE && mqttOk();
 }
 
+// ==================================================
+// WATCHDOG E DIAGNOSTICO DE RESET
+// ==================================================
+
+String obterMotivoReset() {
+  esp_reset_reason_t motivo = esp_reset_reason();
+
+  switch (motivo) {
+    case ESP_RST_POWERON:
+      return "Ligado por energia";
+
+    case ESP_RST_SW:
+      return "Reset por software";
+
+    case ESP_RST_PANIC:
+      return "Reset por panic/erro fatal";
+
+    case ESP_RST_INT_WDT:
+      return "Reset por Interrupt Watchdog";
+
+    case ESP_RST_TASK_WDT:
+      return "Reset por Task Watchdog";
+
+    case ESP_RST_WDT:
+      return "Reset por Watchdog";
+
+    case ESP_RST_BROWNOUT:
+      return "Reset por queda de tensao";
+
+    case ESP_RST_DEEPSLEEP:
+      return "Retorno de deep sleep";
+
+    default:
+      return "Motivo desconhecido";
+  }
+}
+
+bool ultimoResetFoiPorWatchdog() {
+  esp_reset_reason_t motivo = esp_reset_reason();
+
+  return motivo == ESP_RST_TASK_WDT ||
+         motivo == ESP_RST_INT_WDT ||
+         motivo == ESP_RST_WDT;
+}
+
+void atualizarDiagnosticoReset() {
+  motivoUltimoReset = obterMotivoReset();
+
+  if (ultimoResetFoiPorWatchdog()) {
+    totalResetsWatchdog++;
+  }
+}
+
+void iniciarWatchdog() {
+  Serial.println();
+  Serial.println("====================================");
+  Serial.println("INICIANDO WATCHDOG");
+  Serial.println("====================================");
+
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  esp_task_wdt_config_t configWatchdog = {
+    .timeout_ms = TEMPO_WATCHDOG_SEGUNDOS * 1000,
+    .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
+    .trigger_panic = true
+  };
+
+  esp_err_t resultado = esp_task_wdt_init(&configWatchdog);
+
+  if (resultado == ESP_ERR_INVALID_STATE) {
+    resultado = esp_task_wdt_reconfigure(&configWatchdog);
+  }
+#else
+  esp_err_t resultado = esp_task_wdt_init(TEMPO_WATCHDOG_SEGUNDOS, true);
+#endif
+
+  if (resultado != ESP_OK && resultado != ESP_ERR_INVALID_STATE) {
+    watchdogAtivo = false;
+
+    Serial.print("Falha ao configurar Watchdog. Codigo: ");
+    Serial.println(resultado);
+
+    return;
+  }
+
+  esp_err_t resultadoAdd = esp_task_wdt_add(NULL);
+
+  if (resultadoAdd == ESP_OK || resultadoAdd == ESP_ERR_INVALID_STATE) {
+    watchdogAtivo = true;
+
+    Serial.print("Watchdog ativo. Timeout: ");
+    Serial.print(TEMPO_WATCHDOG_SEGUNDOS);
+    Serial.println(" segundos.");
+  } else {
+    watchdogAtivo = false;
+
+    Serial.print("Falha ao adicionar loop ao Watchdog. Codigo: ");
+    Serial.println(resultadoAdd);
+  }
+}
+
+void alimentarWatchdog() {
+  if (watchdogAtivo) {
+    esp_task_wdt_reset();
+  }
+}
+
+void testarWatchdogSerial() {
+#if HABILITAR_TESTE_WATCHDOG
+  if (Serial.available()) {
+    char comando = Serial.read();
+
+    if (comando == 'T' || comando == 't') {
+      Serial.println();
+      Serial.println("====================================");
+      Serial.println("TESTE DO WATCHDOG");
+      Serial.println("====================================");
+      Serial.println("Travamento proposital iniciado.");
+      Serial.println("O ESP32 deve reiniciar quando o timeout do watchdog for atingido.");
+
+      while (true) {
+        // Travamento proposital.
+        // Nao chame alimentarWatchdog() aqui.
+      }
+    }
+  }
+#endif
+}
+
 void enviarCabecalhoHTML(Client& cliente) {
   cliente.println("HTTP/1.1 200 OK");
   cliente.println("Content-Type: text/html; charset=utf-8");
@@ -467,6 +624,17 @@ void enviarPaginaPrincipal(Client& cliente) {
   cliente.print("'>");
   cliente.print(microSdOk ? "Operacional" : "Indisponivel");
   cliente.println("</td></tr>");
+  cliente.print("<tr><td>Watchdog</td><td class='");
+  cliente.print(watchdogAtivo ? "okText" : "errText");
+  cliente.print("'>");
+  cliente.print(watchdogAtivo ? "Ativo" : "Inativo");
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Ultimo reset</td><td>");
+  cliente.print(motivoUltimoReset);
+  cliente.println("</td></tr>");
+  cliente.print("<tr><td>Resets por WDT</td><td>");
+  cliente.print(totalResetsWatchdog);
+  cliente.println("</td></tr>");
   cliente.println("</table></div>");
 
   cliente.println("<div class='card'><h2>Pacotes</h2><table class='table'>");
@@ -503,7 +671,7 @@ void enviarPaginaPrincipal(Client& cliente) {
   cliente.println("<div class='sub'>Interface local embarcada no ESP32. Nao depende de internet externa.</div>");
   cliente.println("</section>");
 
-  cliente.println("<p class='footer'>Gateway Ambiental ESP32 | Ethernet W5500 | Wi-Fi reserva | MQTT | microSD</p>");
+  cliente.println("<p class='footer'>Gateway Ambiental ESP32 | Ethernet W5500 | Wi-Fi reserva | MQTT | microSD | Watchdog</p>");
   cliente.println("</main></body></html>");
 }
 
@@ -598,6 +766,18 @@ void enviarStatusJSON(Client& cliente) {
   cliente.print("\"microsd\":\"");
   cliente.print(microSdOk ? "operacional" : "indisponivel");
   cliente.print("\",");
+
+  cliente.print("\"watchdog\":\"");
+  cliente.print(watchdogAtivo ? "ativo" : "inativo");
+  cliente.print("\",");
+
+  cliente.print("\"ultimo_reset\":\"");
+  cliente.print(motivoUltimoReset);
+  cliente.print("\",");
+
+  cliente.print("\"resets_watchdog\":");
+  cliente.print(totalResetsWatchdog);
+  cliente.print(",");
 
   cliente.print("\"temperatura\":");
   if (existeLeituraValida) cliente.print(dados.temperatura, 1); else cliente.print("null");
@@ -1486,9 +1666,19 @@ void setup() {
   Serial.println();
   Serial.println("====================================");
   Serial.println("GATEWAY AMBIENTAL ESP32");
-  Serial.println("UART + W5500 + Wi-Fi reserva + MQTT + microSD");
+  Serial.println("UART + W5500 + Wi-Fi reserva + MQTT + microSD + Watchdog");
   Serial.println("Prioridade: Ethernet > Wi-Fi > microSD");
   Serial.println("====================================");
+
+  atualizarDiagnosticoReset();
+
+  Serial.print("Motivo do ultimo reset: ");
+  Serial.println(motivoUltimoReset);
+
+  Serial.print("Resets por watchdog desde energizacao: ");
+  Serial.println(totalResetsWatchdog);
+
+  iniciarWatchdog();
 
   SerialSensores.begin(
     9600,
@@ -1520,6 +1710,8 @@ void setup() {
 // ==================================================
 
 void loop() {
+  testarWatchdogSerial();
+
   executarPaginaWeb();
 
   if (conexaoAtual == CONEXAO_ETHERNET) {
@@ -1544,4 +1736,8 @@ void loop() {
     ultimoReenvioPendentes = millis();
     reenviarPendentesMQTT();
   }
+
+  alimentarWatchdog();
+
+  delay(10);
 }
