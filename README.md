@@ -2,7 +2,7 @@
 
 Projeto de um sistema embarcado para monitoramento ambiental utilizando um **Arduino Uno** para realizar a leitura dos sensores e um **ESP32** para funcionar como gateway de comunicação.
 
-O Arduino coleta os dados ambientais e envia as informações para o ESP32 por comunicação UART. O ESP32 recebe e valida os dados, conecta-se à rede Ethernet por meio do módulo W5500, publica as leituras em um broker MQTT e também grava as leituras localmente em um cartão microSD. Caso o broker MQTT esteja indisponível, o ESP32 salva os pacotes como pendentes no microSD e realiza o reenvio automático quando a conexão MQTT volta a funcionar. No computador, o Mosquitto recebe as mensagens MQTT e o Node-RED exibe os dados em dashboard, registra leituras em CSV e armazena o histórico em banco de dados SQLite.
+O Arduino coleta os dados ambientais e envia as informações para o ESP32 por comunicação UART. O ESP32 recebe e valida os dados, conecta-se à rede Ethernet por meio do módulo W5500, utiliza Wi-Fi como conexão reserva, publica as leituras em um broker MQTT e também grava as leituras localmente em um cartão microSD. Caso o broker MQTT esteja indisponível, o ESP32 salva os pacotes como pendentes no microSD e realiza o reenvio automático quando a conexão MQTT volta a funcionar. O gateway também disponibiliza uma página web local com dashboard de diagnóstico, estados das conexões, últimas leituras, uptime, contadores e rota de configuração inicial. No computador, o Mosquitto recebe as mensagens MQTT e o Node-RED exibe os dados em dashboard, registra leituras em CSV e armazena o histórico em banco de dados SQLite.
 
 ---
 
@@ -26,7 +26,9 @@ Desenvolver um gateway ambiental capaz de:
 * Armazenar as leituras localmente no microSD do ESP32;
 * Salvar pacotes pendentes no microSD quando o MQTT falhar;
 * Reenviar automaticamente os pacotes pendentes quando o MQTT voltar;
-* Futuramente implementar Wi-Fi reserva, página web, watchdog, FreeRTOS e OTA.
+* Utilizar Wi-Fi como conexão reserva;
+* Disponibilizar uma página web local de monitoramento e diagnóstico;
+* Futuramente implementar watchdog, FreeRTOS e OTA.
 
 ---
 
@@ -43,10 +45,12 @@ Arduino Uno
 ESP32 Gateway
    │
    ├── Ethernet W5500
+   ├── Wi-Fi reserva
    ├── MQTT
    ├── microSD
    │     ├── Histórico local
    │     └── Pacotes pendentes
+   ├── Página web local
    └── Publicação dos dados
           │
           ▼
@@ -62,8 +66,9 @@ Computador
 Fluxo principal do sistema:
 
 ```text
-Sensores → Arduino Uno → UART → ESP32 → Ethernet W5500 → MQTT → Node-RED → SQLite
-                              └── microSD → histórico local e pendentes MQTT
+Sensores → Arduino Uno → UART → ESP32 → Ethernet W5500/Wi-Fi → MQTT → Node-RED → SQLite
+                              ├── microSD → histórico local e pendentes MQTT
+                              └── Página web → dashboard local do gateway
 ```
 
 ---
@@ -87,10 +92,9 @@ Sensores → Arduino Uno → UART → ESP32 → Ethernet W5500 → MQTT → Node
 
 ### Componentes planejados para as próximas etapas
 
-* LED ou buzzer para indicação de falhas;
+* LED ou buzzer para indicação de falhas críticas;
 * Fonte de alimentação independente;
-* Caixa para montagem do protótipo;
-* Possível uso do Wi-Fi do ESP32 como conexão reserva.
+* Caixa para montagem do protótipo.
 
 ---
 
@@ -135,8 +139,10 @@ Ele é responsável por:
 * Armazenar o histórico das leituras no cartão microSD;
 * Salvar pacotes pendentes no microSD quando o MQTT estiver indisponível;
 * Reenviar automaticamente os pacotes pendentes quando o MQTT voltar;
-* Futuramente disponibilizar uma página web;
-* Futuramente utilizar Wi-Fi como conexão reserva.
+* Utilizar Wi-Fi como conexão reserva quando a Ethernet não estiver disponível;
+* Disponibilizar uma página web local com dashboard de monitoramento;
+* Disponibilizar rota `/status` em JSON para diagnóstico e integração futura;
+* Disponibilizar rota `/config` como base para configurações futuras.
 
 ---
 
@@ -459,6 +465,67 @@ Nenhum pacote pendente restante após a reconexão
 
 ---
 
+## Página web local do gateway
+
+O ESP32 disponibiliza uma página web local para monitoramento e diagnóstico do gateway.
+
+A página pode ser acessada pelo navegador utilizando o endereço IP do ESP32 na rede.
+
+Exemplo:
+
+```text
+http://192.168.100.103
+```
+
+Rotas implementadas:
+
+```text
+/
+/config
+/status
+```
+
+Função de cada rota:
+
+| Rota | Função |
+| ---- | ------ |
+| `/` | Dashboard principal do gateway |
+| `/config` | Página base para configurações futuras |
+| `/status` | Retorno em JSON com informações do sistema |
+
+Informações exibidas no dashboard:
+
+* Estado da conexão Ethernet;
+* Estado do Wi-Fi reserva;
+* Estado da conexão MQTT;
+* Endereço IP da Ethernet;
+* Endereço IP do Wi-Fi;
+* Broker MQTT configurado;
+* Últimas leituras ambientais;
+* Temperatura;
+* Umidade do ar;
+* Umidade do solo;
+* Luminosidade;
+* Chuva;
+* Tempo de funcionamento do ESP32;
+* Total de pacotes válidos recebidos;
+* Total de erros detectados;
+* Falhas MQTT consecutivas;
+* Estado do microSD;
+* Conexão em uso.
+
+O visual foi organizado em formato de dashboard industrial, com tema escuro, cards de status, cards de leitura e área de diagnóstico técnico.
+
+Objetivo da página web:
+
+```text
+Permitir que o gateway seja monitorado diretamente pelo navegador, sem depender somente do Node-RED ou do MQTT Explorer.
+```
+
+Essa etapa aproxima o projeto de um produto real, pois o equipamento passa a ter uma interface própria de supervisão e diagnóstico.
+
+---
+
 # Etapas do projeto
 
 ## Etapa 1 — Teste individual dos sensores
@@ -704,37 +771,68 @@ Reenvio finalizado. Reenviados: 47 | Ainda pendentes: 0
 
 ## Etapa 15 — Wi-Fi como conexão reserva
 
-A Ethernet será a conexão principal do projeto.
+A Ethernet é a conexão principal do projeto.
 
-Caso o cabo Ethernet seja desconectado ou a comunicação falhe, o ESP32 tentará utilizar Wi-Fi.
+O Wi-Fi foi implementado como conexão reserva para manter o gateway funcionando quando a Ethernet não estiver disponível.
 
 Ordem de prioridade:
 
 1. Ethernet;
-2. Wi-Fi;
+2. Wi-Fi reserva;
 3. Armazenamento no cartão microSD.
 
-**Status:** pendente.
+Funcionamento esperado:
+
+* Utilizar Ethernet como caminho principal;
+* Utilizar Wi-Fi quando necessário;
+* Manter o MQTT ativo usando a conexão disponível;
+* Continuar salvando pacotes no microSD caso nenhuma conexão consiga publicar no broker.
+
+**Status:** concluído.
 
 ---
 
 ## Etapa 16 — Página web do gateway
 
-O ESP32 poderá disponibilizar uma página web com informações sobre o sistema.
+O ESP32 disponibiliza uma página web local com informações sobre o sistema.
 
-Informações planejadas:
+A primeira versão foi implementada de forma funcional e, em seguida, evoluída para um dashboard com aparência profissional.
+
+Informações exibidas:
 
 * Estado da conexão Ethernet;
-* Estado da conexão Wi-Fi;
+* Estado da conexão Wi-Fi reserva;
 * Estado da conexão MQTT;
 * Últimas leituras recebidas;
 * Tempo de funcionamento;
-* Quantidade de pacotes recebidos;
+* Quantidade de pacotes válidos recebidos;
 * Quantidade de erros;
-* Endereço IP do ESP32;
-* Opções de configuração.
+* Endereço IP da Ethernet;
+* Endereço IP do Wi-Fi;
+* Estado do microSD;
+* Falhas MQTT consecutivas;
+* Conexão atualmente em uso;
+* Opções de configuração futuras.
 
-**Status:** pendente.
+Rotas implementadas:
+
+```text
+/
+/config
+/status
+```
+
+Características da interface:
+
+* Tema escuro industrial;
+* Cards de status das conexões;
+* Cards das leituras ambientais;
+* Área de diagnóstico técnico;
+* Atualização automática da página;
+* Página responsiva para computador e celular;
+* Rota JSON para integração futura.
+
+**Status:** concluído.
 
 ---
 
@@ -810,52 +908,62 @@ Atualmente, o sistema consegue:
 * Detectar falha de publicação MQTT;
 * Salvar pacotes MQTT pendentes no microSD;
 * Reenviar automaticamente os pacotes pendentes após reconexão;
-* Limpar a fila de pendentes após o reenvio com sucesso.
+* Limpar a fila de pendentes após o reenvio com sucesso;
+* Utilizar Wi-Fi como conexão reserva;
+* Disponibilizar página web local do gateway;
+* Exibir dashboard web com tema profissional;
+* Exibir estados de Ethernet, Wi-Fi, MQTT e microSD;
+* Exibir uptime, pacotes, erros e falhas MQTT;
+* Disponibilizar rota `/config` como base para configurações futuras;
+* Disponibilizar rota `/status` em JSON.
 
 ---
 
 ## Próximo passo
 
-O próximo passo recomendado é implementar o **Wi-Fi como conexão reserva**.
+O próximo passo recomendado é implementar o **watchdog**.
 
-Atualmente, a Ethernet com W5500 é a conexão principal do gateway. A próxima evolução é fazer o ESP32 tentar usar Wi-Fi caso a comunicação pela Ethernet falhe.
+O watchdog será usado para aumentar a confiabilidade do gateway. Ele deverá reiniciar o ESP32 automaticamente caso o sistema trave ou alguma parte crítica deixe de responder.
 
 Objetivo do próximo passo:
 
 ```text
-Manter o gateway conectado ao broker MQTT mesmo se houver falha no cabo Ethernet, no roteador cabeado ou no módulo W5500.
+Tornar o gateway mais robusto, capaz de se recuperar sozinho de travamentos ou falhas críticas.
 ```
+
+Situações que poderão ser monitoradas:
+
+* Travamento do loop principal;
+* Falha prolongada na comunicação UART;
+* Falha prolongada do MQTT;
+* Falha na comunicação com o W5500;
+* Bloqueio durante acesso ao microSD;
+* Tempo excessivo sem receber pacotes válidos;
+* Erros consecutivos acima de um limite definido.
 
 Fluxo desejado da próxima etapa:
 
 ```text
-Arduino → UART → ESP32
-                  │
-                  ├── Ethernet W5500 → MQTT
-                  │
-                  ├── Wi-Fi reserva → MQTT
-                  │
-                  └── microSD → histórico e pendentes
-```
-
-Ordem de prioridade planejada:
-
-```text
-1. Usar Ethernet/W5500 como conexão principal
-2. Se Ethernet falhar, tentar Wi-Fi
-3. Se MQTT continuar indisponível, salvar no microSD
-4. Quando a conexão voltar, reenviar os pendentes
+ESP32 funcionando normalmente
+        ↓
+Alimenta o watchdog periodicamente
+        ↓
+Se o código travar ou parar de alimentar o watchdog
+        ↓
+ESP32 reinicia automaticamente
+        ↓
+Gateway volta a operar
 ```
 
 Primeira implementação do próximo passo:
 
-1. Adicionar as credenciais da rede Wi-Fi no código do ESP32;
-2. Detectar se a Ethernet está disponível;
-3. Manter Ethernet como conexão principal;
-4. Conectar no Wi-Fi quando a Ethernet falhar;
-5. Publicar no MQTT usando a conexão disponível;
-6. Manter o microSD como backup caso nenhuma conexão funcione;
-7. Testar desconectando o cabo Ethernet.
+1. Incluir a biblioteca de watchdog do ESP32;
+2. Configurar um tempo limite seguro;
+3. Registrar o loop principal no watchdog;
+4. Alimentar o watchdog somente quando o sistema estiver rodando corretamente;
+5. Testar o reinício automático com uma simulação de travamento;
+6. Exibir informações de watchdog no monitor serial;
+7. Futuramente exibir o estado do watchdog na página web.
 
 ---
 
@@ -876,7 +984,7 @@ Primeira implementação do próximo passo:
 * Adicionar contagem de pacotes pendentes;
 * Adicionar identificação única para cada leitura;
 * Reenviar dados armazenados quando a conexão voltar;
-* Criar uma página web de configuração;
+* Tornar a página `/config` funcional;
 * Implementar watchdog;
 * Separar o código em tarefas FreeRTOS;
 * Criar uma placa de circuito impresso;
@@ -886,7 +994,7 @@ Primeira implementação do próximo passo:
 
 ---
 
-## Tecnologias utilizadas
+## Tecnologias utilizadas e planejadas
 
 * Arduino;
 * ESP32;
@@ -894,6 +1002,7 @@ Primeira implementação do próximo passo:
 * UART;
 * SPI;
 * Ethernet;
+* Wi-Fi;
 * W5500;
 * MQTT;
 * Mosquitto;
@@ -903,6 +1012,9 @@ Primeira implementação do próximo passo:
 * SQLite;
 * CSV;
 * Cartão microSD;
+* Página web local;
+* JSON;
+* Watchdog;
 * FreeRTOS;
 * HTML;
 * CSS;
