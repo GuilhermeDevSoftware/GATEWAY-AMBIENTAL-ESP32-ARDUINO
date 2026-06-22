@@ -5,6 +5,10 @@
 #include <SD.h>
 #include "esp_task_wdt.h"
 #include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
 
 #if __has_include("esp_arduino_version.h")
   #include "esp_arduino_version.h"
@@ -160,9 +164,15 @@ struct DadosAmbientais {
   int umidadeSolo;
   int luminosidade;
   int chuva;
+  unsigned long timestampMs;
 };
 
-DadosAmbientais dados;
+struct PacoteUART {
+  char linha[100];
+  unsigned long timestampMs;
+};
+
+DadosAmbientais dados = {0, 0, 0, 0, 0, 0};
 
 // ==================================================
 // DIAGNOSTICO DO SISTEMA
@@ -179,6 +189,50 @@ String motivoUltimoReset = "Nao identificado";
 // Mantem a contagem mesmo depois de um reset do ESP32.
 // Essa contagem zera quando o ESP32 perde energia.
 RTC_DATA_ATTR unsigned long totalResetsWatchdog = 0;
+
+// ==================================================
+// CONFIGURACAO DO FREERTOS
+// ==================================================
+
+QueueHandle_t filaUART = NULL;
+QueueHandle_t filaMQTT = NULL;
+QueueHandle_t filaSD = NULL;
+
+SemaphoreHandle_t mutexSistema = NULL;
+SemaphoreHandle_t mutexBarramentoSPI = NULL;
+
+TaskHandle_t handleTaskUART = NULL;
+TaskHandle_t handleTaskValidador = NULL;
+TaskHandle_t handleTaskMQTT = NULL;
+TaskHandle_t handleTaskConexoes = NULL;
+TaskHandle_t handleTaskMicroSD = NULL;
+TaskHandle_t handleTaskWeb = NULL;
+TaskHandle_t handleTaskMonitor = NULL;
+
+enum IndiceTarefaSistema {
+  TAREFA_UART = 0,
+  TAREFA_VALIDADOR,
+  TAREFA_MQTT,
+  TAREFA_CONEXOES,
+  TAREFA_MICROSD,
+  TAREFA_WEB,
+  TAREFA_MONITOR,
+  TOTAL_TAREFAS_SISTEMA
+};
+
+const char* nomesTarefasSistema[TOTAL_TAREFAS_SISTEMA] = {
+  "UART_RX",
+  "VALIDADOR",
+  "MQTT",
+  "CONEXOES",
+  "MICROSD",
+  "WEB_SERVER",
+  "MONITOR"
+};
+
+volatile unsigned long heartbeatTarefas[TOTAL_TAREFAS_SISTEMA] = {0};
+
+const unsigned long limiteHeartbeatMs = 30000;
 
 // ==================================================
 // CONTROLE DO SPI COMPARTILHADO
@@ -432,18 +486,28 @@ void iniciarWatchdog() {
     return;
   }
 
+  watchdogAtivo = true;
+
+  Serial.print("Watchdog configurado. Timeout: ");
+  Serial.print(TEMPO_WATCHDOG_SEGUNDOS);
+  Serial.println(" segundos.");
+  Serial.println("A tarefa MONITOR sera registrada no Watchdog apos iniciar o FreeRTOS.");
+}
+
+void registrarTarefaAtualNoWatchdog(const char* nomeTarefa) {
+  if (!watchdogAtivo) {
+    return;
+  }
+
   esp_err_t resultadoAdd = esp_task_wdt_add(NULL);
 
   if (resultadoAdd == ESP_OK || resultadoAdd == ESP_ERR_INVALID_STATE) {
-    watchdogAtivo = true;
-
-    Serial.print("Watchdog ativo. Timeout: ");
-    Serial.print(TEMPO_WATCHDOG_SEGUNDOS);
-    Serial.println(" segundos.");
+    Serial.print("Tarefa registrada no Watchdog: ");
+    Serial.println(nomeTarefa);
   } else {
-    watchdogAtivo = false;
-
-    Serial.print("Falha ao adicionar loop ao Watchdog. Codigo: ");
+    Serial.print("Falha ao registrar tarefa no Watchdog: ");
+    Serial.print(nomeTarefa);
+    Serial.print(" | Codigo: ");
     Serial.println(resultadoAdd);
   }
 }
@@ -922,10 +986,10 @@ void iniciarMicroSD() {
 // SALVAR HISTORICO NO microSD
 // ==================================================
 
-void salvarNoMicroSD(const DadosAmbientais& leitura) {
+bool salvarNoMicroSD(const DadosAmbientais& leitura) {
   if (!microSdOk) {
     Serial.println("microSD indisponivel. Leitura nao salva.");
-    return;
+    return false;
   }
 
   prepararSPIParaSD();
@@ -934,10 +998,12 @@ void salvarNoMicroSD(const DadosAmbientais& leitura) {
 
   if (!arquivo) {
     Serial.println("Erro ao abrir arquivo CSV no microSD.");
-    return;
+    return false;
   }
 
-  arquivo.print(millis());
+  unsigned long timestamp = leitura.timestampMs > 0 ? leitura.timestampMs : millis();
+
+  arquivo.print(timestamp);
   arquivo.print(",");
   arquivo.print(leitura.temperatura, 2);
   arquivo.print(",");
@@ -952,16 +1018,17 @@ void salvarNoMicroSD(const DadosAmbientais& leitura) {
   arquivo.close();
 
   Serial.println("Leitura salva no microSD.");
+  return true;
 }
 
 // ==================================================
 // SALVAR PACOTE PENDENTE NO microSD
 // ==================================================
 
-void salvarPendenteMQTT(const char* json) {
+bool salvarPendenteMQTT(const char* json) {
   if (!microSdOk) {
     Serial.println("microSD indisponivel. Pendente nao salvo.");
-    return;
+    return false;
   }
 
   prepararSPIParaSD();
@@ -970,13 +1037,14 @@ void salvarPendenteMQTT(const char* json) {
 
   if (!arquivo) {
     Serial.println("Erro ao abrir arquivo de pendentes.");
-    return;
+    return false;
   }
 
   arquivo.println(json);
   arquivo.close();
 
   Serial.println("Pacote salvo como pendente no microSD.");
+  return true;
 }
 
 // ==================================================
@@ -1581,10 +1649,11 @@ void processarLinhaUART(const char* linha) {
     return;
   }
 
+  novaLeitura.timestampMs = millis();
   dados = novaLeitura;
   existeLeituraValida = true;
   totalPacotesRecebidos++;
-  ultimaLeituraValidaMs = millis();
+  ultimaLeituraValidaMs = novaLeitura.timestampMs;
 
   imprimirDados(dados);
 
@@ -1643,6 +1712,414 @@ void receberUART() {
 }
 
 // ==================================================
+// UTILITARIOS DO FREERTOS
+// ==================================================
+
+void atualizarHeartbeat(IndiceTarefaSistema indice) {
+  if (indice < TOTAL_TAREFAS_SISTEMA) {
+    heartbeatTarefas[indice] = millis();
+  }
+}
+
+bool tomarBarramentoSPI(uint32_t timeoutMs) {
+  if (mutexBarramentoSPI == NULL) {
+    return true;
+  }
+
+  return xSemaphoreTake(mutexBarramentoSPI, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+}
+
+void liberarBarramentoSPI() {
+  if (mutexBarramentoSPI != NULL) {
+    xSemaphoreGive(mutexBarramentoSPI);
+  }
+}
+
+void registrarErroSistema() {
+  if (mutexSistema != NULL && xSemaphoreTake(mutexSistema, pdMS_TO_TICKS(100)) == pdTRUE) {
+    totalErros++;
+    xSemaphoreGive(mutexSistema);
+  } else {
+    totalErros++;
+  }
+}
+
+void registrarPacoteValido(const DadosAmbientais& leitura) {
+  if (mutexSistema != NULL && xSemaphoreTake(mutexSistema, pdMS_TO_TICKS(100)) == pdTRUE) {
+    dados = leitura;
+    existeLeituraValida = true;
+    totalPacotesRecebidos++;
+    ultimaLeituraValidaMs = leitura.timestampMs;
+    xSemaphoreGive(mutexSistema);
+  } else {
+    dados = leitura;
+    existeLeituraValida = true;
+    totalPacotesRecebidos++;
+    ultimaLeituraValidaMs = leitura.timestampMs;
+  }
+}
+
+bool validarLinhaUART(const char* linha, DadosAmbientais& novaLeitura) {
+  int quantidadeLida = sscanf(
+    linha,
+    "DADOS,%f,%f,%d,%d,%d",
+    &novaLeitura.temperatura,
+    &novaLeitura.umidadeAr,
+    &novaLeitura.umidadeSolo,
+    &novaLeitura.luminosidade,
+    &novaLeitura.chuva
+  );
+
+  if (quantidadeLida != 5) {
+    Serial.println("Pacote UART invalido.");
+    return false;
+  }
+
+  if (!dadosValidos(novaLeitura)) {
+    Serial.println("Pacote rejeitado: valores fora do intervalo.");
+    return false;
+  }
+
+  return true;
+}
+
+bool tarefasEssenciaisOK() {
+  unsigned long agora = millis();
+
+  for (uint8_t i = 0; i < TOTAL_TAREFAS_SISTEMA; i++) {
+    if (i == TAREFA_MONITOR) {
+      continue;
+    }
+
+    unsigned long ultimoHeartbeat = heartbeatTarefas[i];
+
+    if (ultimoHeartbeat == 0) {
+      continue;
+    }
+
+    if (agora - ultimoHeartbeat > limiteHeartbeatMs) {
+      Serial.print("Alerta: tarefa sem heartbeat recente: ");
+      Serial.println(nomesTarefasSistema[i]);
+      return false;
+    }
+  }
+
+  return true;
+}
+
+void imprimirMonitoramentoFreeRTOS() {
+  Serial.println();
+  Serial.println("========== MONITORAMENTO FREERTOS ==========");
+
+  if (mutexSistema != NULL && xSemaphoreTake(mutexSistema, pdMS_TO_TICKS(100)) == pdTRUE) {
+    Serial.print("Pacotes validos: ");
+    Serial.println(totalPacotesRecebidos);
+
+    Serial.print("Erros detectados: ");
+    Serial.println(totalErros);
+
+    Serial.print("Ethernet: ");
+    Serial.println(ethernetOkWeb() ? "OK" : "OFF");
+
+    Serial.print("Wi-Fi: ");
+    Serial.println(wifiOkWeb() ? "OK" : "OFF");
+
+    Serial.print("MQTT: ");
+    Serial.println(mqttOk() ? "OK" : "OFF");
+
+    xSemaphoreGive(mutexSistema);
+  }
+
+  Serial.print("Conexao atual: ");
+  Serial.println(nomeConexao(conexaoAtual));
+
+  Serial.print("Heap livre: ");
+  Serial.println(ESP.getFreeHeap());
+
+  Serial.print("Fila UART: ");
+  Serial.println(filaUART != NULL ? uxQueueMessagesWaiting(filaUART) : 0);
+
+  Serial.print("Fila MQTT: ");
+  Serial.println(filaMQTT != NULL ? uxQueueMessagesWaiting(filaMQTT) : 0);
+
+  Serial.print("Fila microSD: ");
+  Serial.println(filaSD != NULL ? uxQueueMessagesWaiting(filaSD) : 0);
+
+  Serial.println("============================================");
+}
+
+// ==================================================
+// TAREFAS FREERTOS
+// ==================================================
+
+void tarefaReceberUART(void* parametro) {
+  Serial.println("Tarefa UART iniciada.");
+
+  PacoteUART pacote;
+  char bufferLinha[sizeof(pacote.linha)];
+  uint8_t indiceBuffer = 0;
+
+  while (true) {
+    atualizarHeartbeat(TAREFA_UART);
+
+    while (SerialSensores.available()) {
+      char caractere = SerialSensores.read();
+
+      if (caractere == '\r') {
+        continue;
+      }
+
+      if (caractere == '\n') {
+        if (indiceBuffer > 0) {
+          bufferLinha[indiceBuffer] = '\0';
+
+          memset(&pacote, 0, sizeof(pacote));
+          strncpy(pacote.linha, bufferLinha, sizeof(pacote.linha) - 1);
+          pacote.timestampMs = millis();
+
+          if (xQueueSend(filaUART, &pacote, pdMS_TO_TICKS(100)) != pdTRUE) {
+            Serial.println("Erro: fila UART cheia. Pacote descartado.");
+            registrarErroSistema();
+          }
+
+          indiceBuffer = 0;
+        }
+
+        continue;
+      }
+
+      if (indiceBuffer < sizeof(bufferLinha) - 1) {
+        bufferLinha[indiceBuffer] = caractere;
+        indiceBuffer++;
+      } else {
+        indiceBuffer = 0;
+        Serial.println("Erro: linha UART muito grande.");
+        registrarErroSistema();
+      }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+void tarefaValidarDados(void* parametro) {
+  Serial.println("Tarefa Validador iniciada.");
+
+  PacoteUART pacote;
+  DadosAmbientais novaLeitura;
+
+  while (true) {
+    atualizarHeartbeat(TAREFA_VALIDADOR);
+
+    if (xQueueReceive(filaUART, &pacote, pdMS_TO_TICKS(1000)) == pdTRUE) {
+      Serial.println();
+      Serial.print("UART recebida: ");
+      Serial.println(pacote.linha);
+
+      memset(&novaLeitura, 0, sizeof(novaLeitura));
+
+      if (!validarLinhaUART(pacote.linha, novaLeitura)) {
+        registrarErroSistema();
+        continue;
+      }
+
+      novaLeitura.timestampMs = pacote.timestampMs;
+      registrarPacoteValido(novaLeitura);
+      imprimirDados(novaLeitura);
+
+      if (xQueueSend(filaMQTT, &novaLeitura, pdMS_TO_TICKS(100)) != pdTRUE) {
+        Serial.println("Erro: fila MQTT cheia. Pacote nao enviado para publicacao.");
+        registrarErroSistema();
+      }
+
+      if (xQueueSend(filaSD, &novaLeitura, pdMS_TO_TICKS(100)) != pdTRUE) {
+        Serial.println("Erro: fila microSD cheia. Pacote nao enviado para gravacao.");
+        registrarErroSistema();
+      }
+    }
+  }
+}
+
+void tarefaMQTT(void* parametro) {
+  Serial.println("Tarefa MQTT iniciada.");
+
+  DadosAmbientais leitura;
+  char json[200];
+
+  while (true) {
+    atualizarHeartbeat(TAREFA_MQTT);
+
+    if (tomarBarramentoSPI(1000)) {
+      conectarMQTT();
+
+      if (clienteMQTT.connected()) {
+        clienteMQTT.loop();
+      }
+
+      while (xQueueReceive(filaMQTT, &leitura, 0) == pdTRUE) {
+        montarJson(leitura, json, sizeof(json));
+
+        bool publicado = false;
+
+        if (clienteMQTT.connected()) {
+          publicado = publicarDadosMQTT(leitura, json);
+        }
+
+        if (!publicado) {
+          if (!salvarPendenteMQTT(json)) {
+            registrarErroSistema();
+          }
+        }
+      }
+
+      if (millis() - ultimoReenvioPendentes >= intervaloReenvioPendentes) {
+        ultimoReenvioPendentes = millis();
+        reenviarPendentesMQTT();
+      }
+
+      liberarBarramentoSPI();
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+}
+
+void tarefaConexoes(void* parametro) {
+  Serial.println("Tarefa Conexoes iniciada.");
+
+  while (true) {
+    atualizarHeartbeat(TAREFA_CONEXOES);
+
+    if (tomarBarramentoSPI(3000)) {
+      if (conexaoAtual == CONEXAO_ETHERNET) {
+        prepararSPIParaEthernet();
+        Ethernet.maintain();
+      }
+
+      atualizarConexao();
+      liberarBarramentoSPI();
+    } else {
+      Serial.println("Aviso: tarefa Conexoes aguardando barramento SPI.");
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(intervaloCheckConexao));
+  }
+}
+
+void tarefaMicroSD(void* parametro) {
+  Serial.println("Tarefa microSD iniciada.");
+
+  DadosAmbientais leitura;
+
+  while (true) {
+    atualizarHeartbeat(TAREFA_MICROSD);
+
+    if (xQueueReceive(filaSD, &leitura, pdMS_TO_TICKS(1000)) == pdTRUE) {
+      if (tomarBarramentoSPI(3000)) {
+        bool salvo = salvarNoMicroSD(leitura);
+        liberarBarramentoSPI();
+
+        if (!salvo) {
+          registrarErroSistema();
+        }
+      } else {
+        Serial.println("Erro: microSD nao conseguiu acessar o barramento SPI.");
+        registrarErroSistema();
+      }
+    }
+  }
+}
+
+void tarefaServidorWeb(void* parametro) {
+  Serial.println("Tarefa WebServer iniciada.");
+
+  while (true) {
+    atualizarHeartbeat(TAREFA_WEB);
+
+    if (tomarBarramentoSPI(100)) {
+      executarPaginaWeb();
+      liberarBarramentoSPI();
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+void tarefaMonitoramento(void* parametro) {
+  Serial.println("Tarefa Monitoramento iniciada.");
+  registrarTarefaAtualNoWatchdog("MONITOR");
+
+  unsigned long ultimoRelatorio = 0;
+
+  while (true) {
+    atualizarHeartbeat(TAREFA_MONITOR);
+
+    testarWatchdogSerial();
+
+    if (millis() - ultimoRelatorio >= 10000) {
+      ultimoRelatorio = millis();
+      imprimirMonitoramentoFreeRTOS();
+    }
+
+    if (tarefasEssenciaisOK()) {
+      alimentarWatchdog();
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
+
+bool criarRecursosFreeRTOS() {
+  filaUART = xQueueCreate(10, sizeof(PacoteUART));
+  filaMQTT = xQueueCreate(10, sizeof(DadosAmbientais));
+  filaSD = xQueueCreate(10, sizeof(DadosAmbientais));
+
+  mutexSistema = xSemaphoreCreateMutex();
+  mutexBarramentoSPI = xSemaphoreCreateMutex();
+
+  if (filaUART == NULL || filaMQTT == NULL || filaSD == NULL ||
+      mutexSistema == NULL || mutexBarramentoSPI == NULL) {
+    Serial.println("Erro ao criar filas ou mutex do FreeRTOS.");
+    return false;
+  }
+
+  Serial.println("Filas e mutex do FreeRTOS criados com sucesso.");
+  return true;
+}
+
+bool criarTarefa(const char* nome, TaskFunction_t funcao, uint32_t stack, UBaseType_t prioridade, TaskHandle_t* handle, BaseType_t core) {
+  BaseType_t resultado = xTaskCreatePinnedToCore(funcao, nome, stack, NULL, prioridade, handle, core);
+
+  if (resultado != pdPASS) {
+    Serial.print("Falha ao criar tarefa: ");
+    Serial.println(nome);
+    return false;
+  }
+
+  Serial.print("Tarefa criada: ");
+  Serial.println(nome);
+  return true;
+}
+
+void iniciarTarefasFreeRTOS() {
+  bool tarefasOk = true;
+
+  tarefasOk = tarefasOk && criarTarefa("UART_RX", tarefaReceberUART, 4096, 3, &handleTaskUART, 1);
+  tarefasOk = tarefasOk && criarTarefa("VALIDADOR", tarefaValidarDados, 4096, 3, &handleTaskValidador, 1);
+  tarefasOk = tarefasOk && criarTarefa("MQTT", tarefaMQTT, 8192, 2, &handleTaskMQTT, 1);
+  tarefasOk = tarefasOk && criarTarefa("CONEXOES", tarefaConexoes, 6144, 1, &handleTaskConexoes, 0);
+  tarefasOk = tarefasOk && criarTarefa("MICROSD", tarefaMicroSD, 4096, 2, &handleTaskMicroSD, 1);
+  tarefasOk = tarefasOk && criarTarefa("WEB_SERVER", tarefaServidorWeb, 8192, 1, &handleTaskWeb, 0);
+  tarefasOk = tarefasOk && criarTarefa("MONITOR", tarefaMonitoramento, 4096, 1, &handleTaskMonitor, 0);
+
+  if (tarefasOk) {
+    Serial.println("Todas as tarefas FreeRTOS foram criadas.");
+  } else {
+    Serial.println("Uma ou mais tarefas FreeRTOS falharam ao iniciar.");
+  }
+}
+
+// ==================================================
 // SETUP
 // ==================================================
 
@@ -1666,8 +2143,8 @@ void setup() {
   Serial.println();
   Serial.println("====================================");
   Serial.println("GATEWAY AMBIENTAL ESP32");
-  Serial.println("UART + W5500 + Wi-Fi reserva + MQTT + microSD + Watchdog");
-  Serial.println("Prioridade: Ethernet > Wi-Fi > microSD");
+  Serial.println("UART + W5500 + Wi-Fi reserva + MQTT + microSD + Watchdog + FreeRTOS");
+  Serial.println("Arquitetura: UART -> Validador -> MQTT/microSD/Web");
   Serial.println("====================================");
 
   atualizarDiagnosticoReset();
@@ -1703,6 +2180,15 @@ void setup() {
   conectarMQTT();
 
   iniciarPaginaWeb();
+
+  if (!criarRecursosFreeRTOS()) {
+    Serial.println("Sistema interrompido por falha na criacao do FreeRTOS.");
+    while (true) {
+      delay(1000);
+    }
+  }
+
+  iniciarTarefasFreeRTOS();
 }
 
 // ==================================================
@@ -1710,34 +2196,7 @@ void setup() {
 // ==================================================
 
 void loop() {
-  testarWatchdogSerial();
-
-  executarPaginaWeb();
-
-  if (conexaoAtual == CONEXAO_ETHERNET) {
-    prepararSPIParaEthernet();
-    Ethernet.maintain();
-  }
-
-  if (millis() - ultimoCheckConexao >= intervaloCheckConexao) {
-    ultimoCheckConexao = millis();
-    atualizarConexao();
-  }
-
-  conectarMQTT();
-
-  if (clienteMQTT.connected()) {
-    clienteMQTT.loop();
-  }
-
-  receberUART();
-
-  if (millis() - ultimoReenvioPendentes >= intervaloReenvioPendentes) {
-    ultimoReenvioPendentes = millis();
-    reenviarPendentesMQTT();
-  }
-
-  alimentarWatchdog();
-
-  delay(10);
+  // O loop principal fica livre.
+  // As funcoes do gateway agora rodam nas tarefas FreeRTOS.
+  vTaskDelay(pdMS_TO_TICKS(1000));
 }
